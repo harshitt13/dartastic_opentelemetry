@@ -108,7 +108,7 @@ void main() {
       );
       expect(AttributeLimiter.truncateString('hello', 5), equals('hello'));
       expect(AttributeLimiter.truncateString('hello', null), equals('hello'));
-      expect(AttributeLimiter.truncateString('hello', 0), isNull);
+      expect(AttributeLimiter.truncateString('hello', 0), isEmpty);
     });
 
     test('string list truncation', () {
@@ -117,7 +117,10 @@ void main() {
       expect(truncated, equals(['alp', 'bet', 'gam']));
 
       expect(AttributeLimiter.truncateStringList(list, null), equals(list));
-      expect(AttributeLimiter.truncateStringList(list, 0), isNull);
+      expect(
+        AttributeLimiter.truncateStringList(list, 0),
+        equals(['', '', '']),
+      );
     });
 
     test('surrogate pair truncation does not split surrogate pairs', () {
@@ -131,10 +134,10 @@ void main() {
       expect(AttributeLimiter.truncateString(str, 3), equals('a😀'));
     });
 
-    test('string that would truncate to empty is dropped', () {
+    test('string that would truncate to empty is retained as empty', () {
       final emoji = '😀'; // '\uD83D\uDE00'
-      // Limit 1 lands on lead surrogate, backs up to 0 -> dropped (null).
-      expect(AttributeLimiter.truncateString(emoji, 1), isNull);
+      // Limit 1 lands on lead surrogate and backs up to an empty string.
+      expect(AttributeLimiter.truncateString(emoji, 1), isEmpty);
     });
 
     test('count limit and updating existing keys', () {
@@ -168,10 +171,10 @@ void main() {
       expect(truncated, hasLength(2));
     });
 
-    test('string list all-elements-vanish case (limit 0 drops attribute)', () {
+    test('string list limit 0 retains empty elements', () {
       final list = ['a', 'b'];
-      expect(AttributeLimiter.truncateStringList(list, 0), isNull);
-      expect(AttributeLimiter.truncateStringList(<String>[], 0), isNull);
+      expect(AttributeLimiter.truncateStringList(list, 0), equals(['', '']));
+      expect(AttributeLimiter.truncateStringList(<String>[], 0), isEmpty);
     });
 
     test(
@@ -292,7 +295,7 @@ void main() {
       span.setStringListAttribute<String>('list', ['12345', '1234567']);
       expect(span.attributes.getStringList('list'), equals(['12345', '12345']));
 
-      // Limit 0 drops strings
+      // Limit 0 retains strings as empty values.
       final zeroProvider = OTel.addTracerProvider(
         'zero-val-provider',
         spanLimits: const SpanLimits(attributeValueLengthLimit: 0),
@@ -300,8 +303,15 @@ void main() {
       final zeroTracer = zeroProvider.getTracer('zero');
       final spanZero = zeroTracer.startSpan('szero');
       spanZero.setStringAttribute<String>('str', 'hello');
-      expect(spanZero.droppedAttributesCount, equals(1));
-      expect(spanZero.attributes.getString('str'), isNull);
+      expect(spanZero.droppedAttributesCount, equals(0));
+      expect(spanZero.attributes.getString('str'), isEmpty);
+
+      // Replacing an existing value with a truncated string updates the value
+      // without reporting a drop.
+      spanZero.setIntAttribute('existing', 1);
+      spanZero.setStringAttribute<String>('existing', 'x');
+      expect(spanZero.attributes.getString('existing'), isEmpty);
+      expect(spanZero.droppedAttributesCount, equals(0));
 
       // Non-string attributes unaffected by length limit
       spanZero.setIntAttribute('num', 42);
@@ -711,7 +721,7 @@ void main() {
       await OTel.shutdown();
     });
 
-    test('logs at debug level at most once per span, event, and link', () {
+    test('logs at debug level at most once per span', () {
       final provider = OTel.tracerProvider();
       provider.spanLimits = const SpanLimits(
         attributeCountLimit: 1,
@@ -743,18 +753,17 @@ void main() {
         hasLength(1),
       );
 
-      // Event discard log
+      // Event attribute limits do not produce another log for this span.
       span.addEventNow(
         'ev',
         OTel.attributesFromMap({'e1': 'toolong', 'e2': 'extra'}),
       );
-      // Event log fired for this event record (total is now 2: 1 for span, 1 for event)
       expect(
         logs.where((l) => l.contains(SpanLimitEnforcer.discardLogMessage)),
-        hasLength(2),
+        hasLength(1),
       );
 
-      // Link discard log
+      // Link attribute limits do not produce another log for this span.
       final ctx = OTel.spanContext(
         traceId: OTel.traceIdFrom('00112233445566778899aabbccddeeff'),
         spanId: OTel.spanIdFrom('0011223344556601'),
@@ -763,10 +772,9 @@ void main() {
         ctx,
         OTel.attributesFromMap({'l1': 'toolong', 'l2': 'extra'}),
       );
-      // Link log fired for this link record (total is now 3: 1 span, 1 event, 1 link)
       expect(
         logs.where((l) => l.contains(SpanLimitEnforcer.discardLogMessage)),
-        hasLength(3),
+        hasLength(1),
       );
 
       provider.shutdown();
@@ -788,7 +796,7 @@ void main() {
       provider.shutdown();
     });
 
-    test('event and link COUNT drops do not emit discard log', () {
+    test('event and link count drops log at most once per span', () {
       final provider = OTel.tracerProvider();
       provider.spanLimits = const SpanLimits(
         eventCountLimit: 1,
@@ -802,7 +810,7 @@ void main() {
       expect(span.droppedEventsCount, equals(1));
       expect(
         logs.where((l) => l.contains(SpanLimitEnforcer.discardLogMessage)),
-        isEmpty,
+        hasLength(1),
       );
 
       final ctx = OTel.spanContext(
@@ -814,7 +822,7 @@ void main() {
       expect(span.droppedLinksCount, equals(1));
       expect(
         logs.where((l) => l.contains(SpanLimitEnforcer.discardLogMessage)),
-        isEmpty,
+        hasLength(1),
       );
 
       provider.shutdown();

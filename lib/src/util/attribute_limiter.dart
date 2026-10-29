@@ -40,36 +40,39 @@ class AttributeLimiter {
   /// Truncates [value] to [limit] characters without splitting a surrogate pair.
   ///
   /// If [limit] is `null`, returns [value] unchanged.
-  /// If [limit] is 0, returns `null` (dropped).
+  /// If [limit] is 0, returns an empty string.
   /// If [value.length <= limit], returns [value].
   /// If truncation would split a surrogate pair (ending on a lead surrogate),
   /// backs up 1 code unit.
-  /// If the string would truncate to empty (length 0), returns `null` (dropped).
-  static String? truncateString(String value, int? limit) {
+  /// If the string would truncate to empty, returns an empty string.
+  static String truncateString(String value, int? limit) {
     if (limit == null) return value;
-    if (limit <= 0) return null;
+    if (limit <= 0) return '';
     if (value.length <= limit) return value;
 
     var end = limit;
     if (isLeadSurrogate(value.codeUnitAt(end - 1))) {
       end -= 1;
     }
-    if (end <= 0) return null;
+    if (end <= 0) return '';
     return value.substring(0, end);
   }
 
   /// Truncates each element of [list] without splitting surrogate pairs.
   ///
   /// If [limit] is `null`, returns [list] unchanged.
-  /// If [limit] is 0, returns `null` (the attribute is dropped per OTel rules).
+  /// If [limit] is 0, replaces every element with an empty string.
   /// If [list] is empty, returns [list].
   ///
   /// Elements that truncate to empty are retained as empty strings (`""`) to keep
   /// the element count stable rather than silently removing elements from the list.
-  static List<String>? truncateStringList(List<String> list, int? limit) {
+  static List<String> truncateStringList(List<String> list, int? limit) {
     if (limit == null) return list;
-    if (limit <= 0) return null;
     if (list.isEmpty) return list;
+
+    if (limit <= 0) {
+      return List<String>.filled(list.length, '');
+    }
 
     var anyTruncated = false;
     final truncated = <String>[];
@@ -92,8 +95,7 @@ class AttributeLimiter {
 
   /// Limits an attribute value based on [valueLengthLimit].
   ///
-  /// Returns `null` if the value is dropped.
-  Object? limitValue(Object value) {
+  Object limitValue(Object value) {
     if (value is String) {
       return truncateString(value, valueLengthLimit);
     } else if (value is List<String>) {
@@ -105,8 +107,7 @@ class AttributeLimiter {
   /// Checks if [limited] differs from [original] due to truncation.
   ///
   /// Returns `true` if truncated, `false` otherwise.
-  static bool wasValueTruncated(Object original, Object? limited) {
-    if (limited == null) return false; // Handled as dropped, not just truncated
+  static bool wasValueTruncated(Object original, Object limited) {
     if (original is String && limited is String) {
       return limited.length < original.length;
     }
@@ -148,30 +149,20 @@ class AttributeLimiter {
       if (resultMap.containsKey(key)) {
         // Updating an existing key is allowed even at count limit
         final limited = limitValue(rawValue);
-        if (limited == null) {
-          droppedCount++;
+        if (wasValueTruncated(rawValue, limited)) {
           hadDiscardOrTruncation = true;
-        } else {
-          if (wasValueTruncated(rawValue, limited)) {
-            hadDiscardOrTruncation = true;
-          }
-          resultMap[key] = limited;
         }
+        resultMap[key] = limited;
       } else {
         if (resultMap.length >= countLimit) {
           droppedCount++;
           hadDiscardOrTruncation = true;
         } else {
           final limited = limitValue(rawValue);
-          if (limited == null) {
-            droppedCount++;
+          if (wasValueTruncated(rawValue, limited)) {
             hadDiscardOrTruncation = true;
-          } else {
-            if (wasValueTruncated(rawValue, limited)) {
-              hadDiscardOrTruncation = true;
-            }
-            resultMap[key] = limited;
           }
+          resultMap[key] = limited;
         }
       }
     }

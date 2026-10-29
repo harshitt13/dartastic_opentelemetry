@@ -87,20 +87,6 @@ class SpanLimitEnforcer {
     }
   }
 
-  /// Emits the debug log for an event record directly.
-  void logEventDiscard() {
-    if (OTelLog.isDebug()) {
-      OTelLog.debug(discardLogMessage);
-    }
-  }
-
-  /// Emits the debug log for a link record directly.
-  void logLinkDiscard() {
-    if (OTelLog.isDebug()) {
-      OTelLog.debug(discardLogMessage);
-    }
-  }
-
   /// Processes creation-time span attributes.
   Attributes? processCreationAttributes(Attributes? attributes) {
     if (attributes == null) return null;
@@ -128,6 +114,7 @@ class SpanLimitEnforcer {
     for (final link in links) {
       if (keptLinks.length >= spanLimits.linkCountLimit) {
         _droppedLinksCount++;
+        logSpanDiscard();
         anyModified = true;
         continue;
       }
@@ -139,7 +126,7 @@ class SpanLimitEnforcer {
 
       final attrResult = linkAttributeLimiter.limitAttributes(link.attributes);
       if (attrResult.hadDiscardOrTruncation) {
-        logLinkDiscard();
+        logSpanDiscard();
         anyModified = true;
         final limitedLink = OTel.spanLink(
           link.spanContext,
@@ -173,6 +160,7 @@ class SpanLimitEnforcer {
       }
       if (keptEvents.length >= spanLimits.eventCountLimit) {
         _droppedEventsCount++;
+        logSpanDiscard();
         anyModified = true;
         continue;
       }
@@ -185,7 +173,7 @@ class SpanLimitEnforcer {
       final attrResult =
           eventAttributeLimiter.limitAttributes(event.attributes);
       if (attrResult.hadDiscardOrTruncation) {
-        logEventDiscard();
+        logSpanDiscard();
         anyModified = true;
         final limitedEvent = OTel.spanEvent(
           event.name,
@@ -220,12 +208,6 @@ class SpanLimitEnforcer {
     }
 
     final limited = spanAttributeLimiter.limitValue(value);
-    if (limited == null) {
-      _droppedAttributesCount++;
-      logSpanDiscard();
-      return null;
-    }
-
     if (AttributeLimiter.wasValueTruncated(value, limited)) {
       logSpanDiscard();
     }
@@ -281,6 +263,7 @@ class SpanLimitEnforcer {
     }
     if (currentEventCount >= spanLimits.eventCountLimit) {
       _droppedEventsCount++;
+      logSpanDiscard();
       return null;
     }
 
@@ -292,7 +275,7 @@ class SpanLimitEnforcer {
         eventAttributeLimiter.limitAttributes(spanEvent.attributes);
 
     if (attrResult.hadDiscardOrTruncation) {
-      logEventDiscard();
+      logSpanDiscard();
       final limitedEvent = OTel.spanEvent(
         spanEvent.name,
         attrResult.attributes,
@@ -311,6 +294,7 @@ class SpanLimitEnforcer {
   SpanLink? processAddLink(SpanLink spanLink, int currentLinkCount) {
     if (currentLinkCount >= spanLimits.linkCountLimit) {
       _droppedLinksCount++;
+      logSpanDiscard();
       return null;
     }
 
@@ -322,7 +306,7 @@ class SpanLimitEnforcer {
         linkAttributeLimiter.limitAttributes(spanLink.attributes);
 
     if (attrResult.hadDiscardOrTruncation) {
-      logLinkDiscard();
+      logSpanDiscard();
       final limitedLink = OTel.spanLink(
         spanLink.spanContext,
         attributes: attrResult.attributes,
