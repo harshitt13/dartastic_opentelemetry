@@ -21,6 +21,25 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.1.0-beta.18-wip]
 
+### Changed
+
+- **BREAKING**: Migrate to API rc.5's full `AnyValue` hierarchy
+  ([API #123](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry_api/pull/123)).
+  `Attribute` is no longer generic and its `value` is an `AnyValue`.
+  SDK log bodies are `AnyValue?`; emitting or assigning a raw body still
+  converts it automatically. Attribute map entry points, including metric
+  instruments, accept `Map<String, Object?>`. Prometheus encodes collection
+  labels as JSON, bytes as base64, and null as an empty string.
+
+### Fixed
+
+- Preserve maps, nested and mixed arrays, bytes, and explicit null values in
+  OTLP span, log, and metric exports, including resource and scope attributes,
+  events, links, and exemplars. This satisfies common.md's MUST requirement
+  that attribute values support the full `AnyValue` hierarchy
+  ([#236](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/236),
+  [API #123](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry_api/pull/123)).
+
 ## [1.1.0-beta.17] - 2026-10-11
 
 The spec-compliance issues this release closes ([#106](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/106), 

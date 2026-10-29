@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import 'dart:async';
+import 'dart:convert';
 
-import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelLog;
+import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart';
 import '../../data/metric.dart';
 import '../../data/metric_data.dart';
 import '../../data/metric_point.dart';
@@ -220,15 +220,14 @@ class PrometheusExporter implements MetricExporter {
 
   /// Sanitizes a label value.
   String _sanitizeValue(dynamic value) {
-    // Handle AttributeValue objects by extracting the raw value
-    if (value.toString().startsWith('AttributeValue(') &&
-        value.toString().endsWith(')')) {
-      // Extract the value inside AttributeValue(...)
-      final rawValue = value.toString().substring(
-            'AttributeValue('.length,
-            value.toString().length - 1,
-          );
-      value = rawValue;
+    // Prometheus labels are strings. Follow common.md's non-OTLP mapping:
+    // JSON for collections, base64 for bytes, and an empty string for null.
+    if (value is Attribute) {
+      final anyValue = value.value;
+      final jsonValue = _labelJson(anyValue, 0);
+      value = anyValue is AnyValueArray || anyValue is AnyValueMap
+          ? jsonEncode(jsonValue)
+          : jsonValue?.toString() ?? '';
     }
 
     // Escape quotes, backslashes, and newlines
@@ -237,6 +236,26 @@ class PrometheusExporter implements MetricExporter {
         .replaceAll(r'\', r'\\')
         .replaceAll('"', r'\"')
         .replaceAll('\n', '\\n');
+  }
+
+  Object? _labelJson(AnyValue value, int depth) {
+    if (depth >= 32 && value is! AnyValueNull) {
+      OTelErrorHandling.report(ArgumentError(
+          'AnyValue export nesting exceeds the maximum depth of 32'));
+      return null;
+    }
+    return switch (value) {
+      AnyValueNull() => null,
+      AnyValueString(value: final v) => v,
+      AnyValueBool(value: final v) => v,
+      AnyValueInt(value: final v) => v,
+      AnyValueDouble(value: final v) => v.isFinite ? v : v.toString(),
+      AnyValueBytes(value: final v) => base64Encode(v),
+      AnyValueArray(value: final v) =>
+        v.map((item) => _labelJson(item, depth + 1)).toList(),
+      AnyValueMap(value: final v) =>
+        v.map((key, item) => MapEntry(key, _labelJson(item, depth + 1))),
+    };
   }
 
   @override

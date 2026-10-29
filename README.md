@@ -9,6 +9,9 @@ Dartastic can be used with any OTel backend since it's standards-compliant.
 
 Dartastic supports all Dart and Flutter targets including, mobile, desktop, web and wasm. (Windows needs validation.)
 
+Upgrading to API rc.5? See the [AnyValue migration guide](doc/anyvalue-migration.md)
+for attribute types, structured log bodies, and nullable maps.
+
 The Dartastic OTel SDK is in the process of being [Donation to the CNCF](https://github.com/open-telemetry/community/issues/2718)
 to become the official standard for Dart OpenTelemetry.
 
