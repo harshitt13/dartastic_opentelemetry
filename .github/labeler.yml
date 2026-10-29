@@ -93,6 +93,10 @@ core:
           - 'lib/testing.dart'
           - 'test/unit/factory/**'
           - 'test/unit/util/**'
+          - 'test/unit/otel_*_test.dart'
+          - 'test/unit/version_sync_test.dart'
+          - 'test/unit/testing_lib_test.dart'
+          - 'test/web/util/zip/**'
 
 # Everything that is not a signal.
 
