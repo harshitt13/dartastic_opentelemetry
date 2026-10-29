@@ -74,6 +74,8 @@ export:
           - 'lib/proto/collector/**'
           - 'test/unit/export/**'
           - 'test/unit/**/export/**'
+          - 'test/unit/otlp_*_test.dart'
+          - 'test/integration/otlp_*_test.dart'
           - 'example/otlp_*.dart'
 
 proto:
