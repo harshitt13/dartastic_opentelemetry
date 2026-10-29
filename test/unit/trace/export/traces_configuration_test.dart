@@ -59,6 +59,25 @@ void main() {
       expect(processor.exporter, isA<OtlpHttpSpanExporter>());
     });
 
+    test('endpoint parameter is used when otlp config endpoint is null', () {
+      OTelLog.currentLevel = LogLevel.debug;
+
+      TracesConfiguration.configureTracerProvider(
+        endpoint: 'http://param-collector:4318',
+        exporters: const ['otlp'],
+        otlpConfig: emptyOtlpConfig,
+        bspConfig: bspConfig,
+      );
+
+      expect(
+        warnings.join('\n'),
+        contains(
+          'OtlpHttpSpanExporter: Created with endpoint: '
+          'http://param-collector:4318',
+        ),
+      );
+    });
+
     test('grpc protocol produces grpc exporter', () {
       final otlpConfig = (
         endpoint: 'http://localhost:4317',
