@@ -32,8 +32,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   converts it automatically. A null body means absent; `AnyValueNull()` means
   an explicitly present empty value. Attribute map entry points, including
   metric `addWithMap`, `recordWithMap`, and `observeWithMap`, accept
-  `Map<String, Object?>` through both SDK and API types. Prometheus encodes collection
-  labels as JSON, bytes as base64, and null as an empty string.
+  `Map<String, Object?>` through both SDK and API types. The semantic-key
+  helpers `OTel.attributesFromSemanticMap` and `OTel.attributesOf<E>` also
+  accept nullable values. Prometheus encodes collection labels as JSON,
+  bytes as base64, and null as an empty string.
 
 ### Fixed
 
@@ -43,6 +45,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   that attribute values support the full `AnyValue` hierarchy
   ([#236](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/236),
   [API #123](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry_api/pull/123)).
+  Directly constructed values exceeding the OTLP encoder's 32-level depth
+  guard report once per encoding, including when multiple leaves are truncated.
 
 ## [1.1.0-beta.17] - 2026-10-11
 

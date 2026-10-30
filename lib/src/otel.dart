@@ -1082,13 +1082,14 @@ class OTel {
   /// ```
   ///
   /// instead of `attributesFromMap({Http.httpRequestMethod.key: 'GET', …})`.
-  /// Mixing enum types in one map is fine — the param is `Map<OTelSemantic, Object>`,
+  /// Mixing enum types in one map is fine; the param is `Map<OTelSemantic, Object?>`,
   /// and every semconv enum implements `OTelSemantic`.
+  /// Null values become [AnyValueNull], just as with [attributesFromMap].
   ///
   /// Passthrough to [OTelAPI.attributesFromSemanticMap] for symmetry with
   /// the [attributesFromMap] convenience.
   static Attributes attributesFromSemanticMap(
-    Map<OTelSemantic, Object> semanticMap,
+    Map<OTelSemantic, Object?> semanticMap,
   ) {
     return OTelAPI.attributesFromSemanticMap(semanticMap);
   }
@@ -1113,25 +1114,25 @@ class OTel {
   /// ```
   ///
   /// **Mix and match**: each typed-enum map can be spread into a wider
-  /// `Map<OTelSemantic, Object>` literal, which is exactly what
-  /// [attributesFromSemanticMap] takes — so combining HTTP + Database
+  /// `Map<OTelSemantic, Object?>` literal, which is exactly what
+  /// [attributesFromSemanticMap] takes, so combining HTTP + Database
   /// keys with full dot-shorthand looks like:
   ///
   /// ```dart
   /// OTel.attributesFromSemanticMap({
-  ///   ...<Http, Object>{
+  ///   ...<Http, Object?>{
   ///     Http.httpRequestMethod: 'GET',
   ///     Http.httpResponseStatusCode: 200,
   ///   },
-  ///   ...<Database, Object>{
+  ///   ...<Db, Object?>{
   ///     Db.dbSystemName: DbSystem.postgresql.value,
   ///   },
   /// });
   /// ```
   ///
-  /// Passthrough to [OTelAPI.attributesOf].
+  /// Null values become [AnyValueNull]. Passthrough to [OTelAPI.attributesOf].
   static Attributes attributesOf<E extends OTelSemantic>(
-    Map<E, Object> typedMap,
+    Map<E, Object?> typedMap,
   ) =>
       OTelAPI.attributesOf<E>(typedMap);
 

@@ -30,6 +30,8 @@ Map<String, Object?> values() => {
       'emptyArray': <Object?>[],
       'emptyMap': <String, Object?>{},
       'emptyBytes': Uint8List(0),
+      'rating': BrowserWebVitalRating.needsImprovement,
+      'state': HwState.needsCleaning,
       'nested': <Object?>[
         1,
         2.5,
@@ -53,6 +55,8 @@ Map<String, proto.AnyValue> expectedValues() => {
       'emptyArray': proto.AnyValue(arrayValue: proto.ArrayValue()),
       'emptyMap': proto.AnyValue(kvlistValue: proto.KeyValueList()),
       'emptyBytes': proto.AnyValue(bytesValue: []),
+      'rating': proto.AnyValue(stringValue: 'needs-improvement'),
+      'state': proto.AnyValue(stringValue: 'needs_cleaning'),
       'nested': proto.AnyValue(
         arrayValue: proto.ArrayValue(values: [
           proto.AnyValue(intValue: Int64(1)),
@@ -251,6 +255,54 @@ void main() {
     expectAttributes(otlpAttributes(merged.attributes));
   });
 
+  test('SDK semantic map helpers preserve null before and after initialization',
+      () async {
+    await OTel.reset();
+    void checkHelpers() {
+      final expected = OTel.attributesFromMap({'http.request.method': null});
+      final attributes = [
+        OTel.attributesFromSemanticMap(
+            <OTelSemantic, Object?>{Http.httpRequestMethod: null}),
+        OTel.attributesOf<Http>(<Http, Object?>{Http.httpRequestMethod: null}),
+      ];
+      for (final attrs in attributes) {
+        expect(attrs, expected);
+        expect(
+            attrs.toMap()['http.request.method']!.value, isA<AnyValueNull>());
+        final encoded = otlpAttributes(attrs).single;
+        expect(encoded.key, 'http.request.method');
+        expect(encoded.hasValue(), isTrue);
+        expect(encoded.value.whichValue(), proto.AnyValue_Value.notSet);
+      }
+    }
+
+    checkHelpers();
+    await OTel.initialize(
+        detectPlatformResources: false,
+        spanProcessor: SimpleSpanProcessor(InMemorySpanExporter()),
+        enableLogs: false,
+        enableMetrics: false);
+    checkHelpers();
+  });
+
+  test('typed double and integer lists retain distinct OTLP element types', () {
+    final attrs = OTel.attributesFromMap({
+      'doubles': <double>[1.0, 2.5],
+      'integers': <int>[1, 2],
+    });
+    final encoded = {
+      for (final entry in otlpAttributes(attrs)) entry.key: entry.value
+    };
+    final doubles = encoded['doubles']!.arrayValue.values;
+    expect(doubles.map((item) => item.whichValue()),
+        everyElement(proto.AnyValue_Value.doubleValue));
+    expect(doubles.map((item) => item.doubleValue), [1.0, 2.5]);
+    final integers = encoded['integers']!.arrayValue.values;
+    expect(integers.map((item) => item.whichValue()),
+        everyElement(proto.AnyValue_Value.intValue));
+    expect(integers.map((item) => item.intValue.toInt()), [1, 2]);
+  });
+
   test('non-finite doubles keep their protobuf and JSON representation', () {
     for (final value in [
       double.nan,
@@ -309,6 +361,60 @@ void main() {
     expect(errors, hasLength(1));
   });
 
+  for (final kind in ['array', 'map']) {
+    for (final wrappers in [30, 31, 32]) {
+      test('$kind export depth $wrappers reports once per encoding', () {
+        final errors = <Object>[];
+        OTelErrorHandling.handler = (error, _) => errors.add(error);
+        addTearDown(OTelErrorHandling.resetToDefault);
+        var value = kind == 'array'
+            ? AnyValueArray(List.filled(64, const AnyValueInt(1)))
+            : AnyValueMap(
+                {for (var i = 0; i < 64; i++) '$i': const AnyValueInt(1)});
+        for (var i = 0; i < wrappers; i++) {
+          value = AnyValueArray([value]);
+        }
+
+        for (var call = 1; call <= 2; call++) {
+          var encoded = otlpAnyValue(value);
+          expect(errors, hasLength(wrappers == 30 ? 0 : call));
+          for (var i = 0; i < wrappers; i++) {
+            encoded = encoded.arrayValue.values.single;
+          }
+          if (wrappers == 32) {
+            expect(encoded.whichValue(), proto.AnyValue_Value.notSet);
+          } else {
+            final leaves = kind == 'array'
+                ? encoded.arrayValue.values
+                : encoded.kvlistValue.values.map((entry) => entry.value);
+            expect(leaves, hasLength(64));
+            expect(
+                leaves.map((leaf) => leaf.whichValue()),
+                everyElement(wrappers == 30
+                    ? proto.AnyValue_Value.intValue
+                    : proto.AnyValue_Value.notSet));
+          }
+        }
+      });
+    }
+  }
+
+  test('export depth failure propagates a strict handler exception once', () {
+    final errors = <Object>[];
+    final sentinel = StateError('strict handler');
+    OTelErrorHandling.handler = (error, _) {
+      errors.add(error);
+      throw sentinel;
+    };
+    addTearDown(OTelErrorHandling.resetToDefault);
+    AnyValue value = AnyValueArray(List.filled(64, const AnyValueInt(1)));
+    for (var i = 0; i < 31; i++) {
+      value = AnyValueArray([value]);
+    }
+    expect(() => otlpAnyValue(value), throwsA(same(sentinel)));
+    expect(errors, hasLength(1));
+  });
+
   test('Prometheus labels encode structured values instead of debug strings',
       () async {
     final exporter = PrometheusExporter();
@@ -320,6 +426,8 @@ void main() {
     expect(text, contains('emptyMap="{}"'));
     expect(text, contains('emptyArray="[]"'));
     expect(text, contains('emptyBytes=""'));
+    expect(text, contains('rating="needs-improvement"'));
+    expect(text, contains('state="needs_cleaning"'));
     expect(
         text,
         contains(
@@ -441,6 +549,8 @@ void main() {
             for (final a in attrs.cast<Map>()) a['key']: a['value']
           };
           expect(actual['bytes'], {'bytesValue': 'AID/'});
+          expect(actual['rating'], {'stringValue': 'needs-improvement'});
+          expect(actual['state'], {'stringValue': 'needs_cleaning'});
           expect(actual['large'], {'intValue': '9007199254740993'});
           expect(actual['null'], isEmpty);
           expect(actual['emptyBytes'], {'bytesValue': ''});
