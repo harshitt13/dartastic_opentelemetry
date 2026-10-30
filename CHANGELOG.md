@@ -25,10 +25,14 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 - **BREAKING**: Migrate to API rc.5's full `AnyValue` hierarchy
   ([API #123](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry_api/pull/123)).
-  `Attribute` is no longer generic and its `value` is an `AnyValue`.
+  The API dependency is now `>=1.0.0-rc.5 <1.0.0-rc.6`.
+  Remove type arguments from `Attribute<T>`; its `value` is now an `AnyValue`.
+  Read values with typed `Attributes` getters, pattern matching, or `unwrap()`.
   SDK log bodies are `AnyValue?`; emitting or assigning a raw body still
-  converts it automatically. Attribute map entry points, including metric
-  instruments, accept `Map<String, Object?>`. Prometheus encodes collection
+  converts it automatically. A null body means absent; `AnyValueNull()` means
+  an explicitly present empty value. Attribute map entry points, including
+  metric `addWithMap`, `recordWithMap`, and `observeWithMap`, accept
+  `Map<String, Object?>` through both SDK and API types. Prometheus encodes collection
   labels as JSON, bytes as base64, and null as an empty string.
 
 ### Fixed

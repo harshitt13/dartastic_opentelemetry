@@ -277,7 +277,8 @@ void main() {
         spanProcessor: SimpleSpanProcessor(InMemorySpanExporter()),
         enableLogs: false,
         metricReader: reader);
-    final meter = OTel.meter('maps');
+    // Exercise the public API interface as well as the SDK implementation.
+    final APIMeter meter = OTel.meter('maps');
     meter.createCounter<int>(name: 'counter').addWithMap(1, values());
     meter.createUpDownCounter<int>(name: 'updown').addWithMap(-1, values());
     meter.createGauge<double>(name: 'gauge').recordWithMap(1.5, values());
