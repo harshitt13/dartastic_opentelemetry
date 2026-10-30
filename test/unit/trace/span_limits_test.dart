@@ -206,13 +206,13 @@ void main() {
 
       // Event with null attributes
       final eventWithNullAttrs = OTel.spanEvent('ev1', null, DateTime.now());
-      final processedEvent = enforcer.processAddEvent(eventWithNullAttrs, 0);
+      final processedEvent = enforcer.processAddEvent(eventWithNullAttrs);
       expect(identical(processedEvent, eventWithNullAttrs), isTrue);
       expect(processedEvent!.attributes, isNull);
 
       // Link with null attributes
       final linkWithNullAttrs = OTel.spanLink(ctx, attributes: null);
-      final processedLink = enforcer.processAddLink(linkWithNullAttrs, 0);
+      final processedLink = enforcer.processAddLink(linkWithNullAttrs);
       expect(identical(processedLink, linkWithNullAttrs), isTrue);
       expect(identical(processedLink!.attributes, linkWithNullAttrs.attributes),
           isTrue);
@@ -220,12 +220,12 @@ void main() {
       // Event with non-empty attributes that are not truncated
       final attrs = OTel.attributesFromMap({'k': 'v'});
       final eventWithAttrs = OTel.spanEvent('ev2', attrs, DateTime.now());
-      final processedEvent2 = enforcer.processAddEvent(eventWithAttrs, 0);
+      final processedEvent2 = enforcer.processAddEvent(eventWithAttrs);
       expect(identical(processedEvent2, eventWithAttrs), isTrue);
 
       // Link with non-empty attributes that are not truncated
       final linkWithAttrs = OTel.spanLink(ctx, attributes: attrs);
-      final processedLink2 = enforcer.processAddLink(linkWithAttrs, 0);
+      final processedLink2 = enforcer.processAddLink(linkWithAttrs);
       expect(identical(processedLink2, linkWithAttrs), isTrue);
     });
   });
@@ -574,6 +574,17 @@ void main() {
       expect(span.droppedAttributesCount, equals(5));
     });
 
+    test('empty attribute keys do not consume the count limit', () {
+      provider.spanLimits = const SpanLimits(attributeCountLimit: 1);
+
+      final span = tracer.startSpan('s');
+      span.setIntAttribute('', 1);
+      span.setIntAttribute('valid', 2);
+
+      expect(span.attributes.getInt('valid'), equals(2));
+      expect(span.droppedAttributesCount, equals(0));
+    });
+
     test(
       'recordException routes through addEvent and enforces event limits',
       () {
@@ -698,9 +709,41 @@ void main() {
         equals(1),
       ); // sampler_attr exceeded limit
     });
+
+    test('creation-time event and link lists are copied before counting', () {
+      provider.spanLimits = const SpanLimits(
+        eventCountLimit: 2,
+        linkCountLimit: 2,
+      );
+      tracer = provider.getTracer('test');
+
+      final ctx = OTel.spanContext(
+        traceId: OTel.traceIdFrom('00112233445566778899aabbccddeeff'),
+        spanId: OTel.spanIdFrom('0011223344556601'),
+      );
+      final events = [OTel.spanEventNow('creation', OTel.attributes())];
+      final links = [OTel.spanLink(ctx)];
+      final span = tracer.createSpan(
+        name: 'created',
+        links: links,
+        spanEvents: events,
+      );
+
+      events.add(OTel.spanEventNow('external', OTel.attributes()));
+      links.add(OTel.spanLink(ctx));
+      expect(span.spanEvents, hasLength(1));
+      expect(span.spanLinks, hasLength(1));
+
+      span.addEventNow('added');
+      span.addLink(ctx);
+      expect(span.spanEvents, hasLength(2));
+      expect(span.spanLinks, hasLength(2));
+      expect(span.droppedEventsCount, equals(0));
+      expect(span.droppedLinksCount, equals(0));
+    });
   });
 
-  group('Discard logging (v1.60.0 debug log at most once per record)', () {
+  group('Discard logging (v1.60.0 debug log at most once per span)', () {
     late LogLevel savedLevel;
     late LogFunction? savedLogFn;
     late List<String> logs;
@@ -978,17 +1021,32 @@ void main() {
       expect(parsed.attributeValueLengthLimit, equals(99));
       expect(parsed.eventCountLimit, isNull);
       expect(parsed.linkCountLimit, isNull);
-      expect(parsed.attributePerEventCountLimit, isNull);
-      expect(parsed.attributePerLinkCountLimit, isNull);
+      expect(parsed.attributePerEventCountLimit, equals(88));
+      expect(parsed.attributePerLinkCountLimit, equals(88));
 
       final limits = SpanLimits.fromEnvironment();
       expect(limits.attributeCountLimit, equals(88));
       expect(limits.attributeValueLengthLimit, equals(99));
-      // Event/link limits have no fallback to attribute limits, defaults are 128
+      // Event/link collection limits have no fallback to attribute limits.
       expect(limits.eventCountLimit, equals(128));
       expect(limits.linkCountLimit, equals(128));
-      expect(limits.attributePerEventCountLimit, equals(128));
-      expect(limits.attributePerLinkCountLimit, equals(128));
+      expect(limits.attributePerEventCountLimit, equals(88));
+      expect(limits.attributePerLinkCountLimit, equals(88));
+    });
+
+    test('invalid model-specific values fall back to general limits', () {
+      env({
+        'OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT': 'invalid',
+        'OTEL_EVENT_ATTRIBUTE_COUNT_LIMIT': '-1',
+        'OTEL_LINK_ATTRIBUTE_COUNT_LIMIT': 'invalid',
+        'OTEL_ATTRIBUTE_COUNT_LIMIT': '7',
+      });
+
+      final parsed = OTelEnv.getSpanLimits();
+      expect(parsed.attributeCountLimit, equals(7));
+      expect(parsed.attributePerEventCountLimit, equals(7));
+      expect(parsed.attributePerLinkCountLimit, equals(7));
+      expect(logs, hasLength(3));
     });
 
     test('invalid env values log warnings and fall back to null/default', () {
@@ -1213,7 +1271,7 @@ void main() {
       expect(typeAttr.value, equals('_ThrowingToStringException'));
     });
 
-    test('addEventNow honoring a custom TimeProvider', () async {
+    test('event helpers use the tracer time provider snapshot', () async {
       await OTel.reset();
       await OTel.initialize(serviceName: 'test-time');
       final fixedTime = DateTime.utc(2026, 10, 11, 15, 30, 0);
@@ -1221,11 +1279,18 @@ void main() {
       provider.timeProvider = _CustomTimeProvider(fixedTime);
 
       final tracer = provider.getTracer('test');
+      provider.timeProvider = _CustomTimeProvider(
+        fixedTime.add(const Duration(hours: 1)),
+      );
       final span = tracer.startSpan('event-time-span');
       span.addEventNow('custom_time_event');
+      span.addEvents({'custom_time_event_2': null});
+      span.recordException(Exception('custom_time_exception'));
 
-      expect(span.spanEvents, hasLength(1));
-      expect(span.spanEvents!.first.timestamp, equals(fixedTime));
+      expect(span.spanEvents, hasLength(3));
+      for (final event in span.spanEvents!) {
+        expect(event.timestamp, equals(fixedTime));
+      }
     });
 
     test('setDateTimeAsStringAttribute format unchanged', () async {
@@ -1252,12 +1317,12 @@ void main() {
       final tracer = provider.getTracer('test');
       final span = tracer.startSpan('empty-event-span');
 
-      // addEventNow with empty string is dropped silently
+      // The API reports the invalid name and the span drops the event.
       span.addEventNow('');
       expect(span.spanEvents, isNull);
       expect(span.droppedEventsCount, equals(0));
 
-      // addEvents with empty key is dropped, valid key is added
+      // addEvents also reports and drops the empty name, then adds the valid one.
       span.addEvents({'': null, 'valid_event': null});
       expect(span.spanEvents, hasLength(1));
       expect(span.spanEvents!.first.name, equals('valid_event'));

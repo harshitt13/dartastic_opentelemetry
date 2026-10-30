@@ -204,8 +204,7 @@ class Span implements APISpan {
     if (spanEvent.name.isEmpty) return;
     final enforcer = _enforcer;
     if (enforcer != null) {
-      final currentCount = _readable.spanEvents?.length ?? 0;
-      final limited = enforcer.processAddEvent(spanEvent, currentCount);
+      final limited = enforcer.processAddEvent(spanEvent);
       if (limited != null) {
         _delegate.addEvent(limited);
       }
@@ -217,17 +216,15 @@ class Span implements APISpan {
   @override
   void addEventNow(String name, [Attributes? attributes]) {
     if (!_isRecording || isEnded) return;
-    if (name.isEmpty) return;
-    final timestamp = _sdkTracer.provider.timeProvider.nowDateTime();
+    final timestamp = _sdkTracer.timeProvider.nowDateTime();
     addEvent(OTel.spanEvent(name, attributes ?? OTel.attributes(), timestamp));
   }
 
   @override
   void addEvents(Map<String, Attributes?> spanEvents) {
     if (!_isRecording || isEnded) return;
-    final timestamp = _sdkTracer.provider.timeProvider.nowDateTime();
+    final timestamp = _sdkTracer.timeProvider.nowDateTime();
     for (final entry in spanEvents.entries) {
-      if (entry.key.isEmpty) continue;
       addEvent(OTel.spanEvent(
         entry.key,
         entry.value ?? OTel.attributes(),
@@ -249,8 +246,7 @@ class Span implements APISpan {
     if (!_isRecording || isEnded) return;
     final enforcer = _enforcer;
     if (enforcer != null) {
-      final currentCount = _readable.spanLinks?.length ?? 0;
-      final limited = enforcer.processAddLink(spanLink, currentCount);
+      final limited = enforcer.processAddLink(spanLink);
       if (limited != null) {
         _delegate.addSpanLink(limited);
       }
@@ -308,7 +304,7 @@ class Span implements APISpan {
     if (attributes != null) {
       merged = merged.copyWithAttributes(attributes);
     }
-    final timestamp = _sdkTracer.provider.timeProvider.nowDateTime();
+    final timestamp = _sdkTracer.timeProvider.nowDateTime();
     addEvent(OTel.spanEvent('exception', merged, timestamp));
   }
 

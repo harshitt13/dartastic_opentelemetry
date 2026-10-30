@@ -409,8 +409,8 @@ void main() {
       expect(fallback.attributeCountLimit, equals(32));
       expect(fallback.eventCountLimit, isNull);
       expect(fallback.linkCountLimit, isNull);
-      expect(fallback.attributePerEventCountLimit, isNull);
-      expect(fallback.attributePerLinkCountLimit, isNull);
+      expect(fallback.attributePerEventCountLimit, equals(32));
+      expect(fallback.attributePerLinkCountLimit, equals(32));
     });
   });
 

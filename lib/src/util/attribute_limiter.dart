@@ -138,6 +138,14 @@ class AttributeLimiter {
       );
     }
 
+    if (valueLengthLimit == null && input.length <= countLimit) {
+      return (
+        attributes: input,
+        droppedCount: 0,
+        hadDiscardOrTruncation: false,
+      );
+    }
+
     final resultMap = <String, Object>{};
     var droppedCount = 0;
     var hadDiscardOrTruncation = false;

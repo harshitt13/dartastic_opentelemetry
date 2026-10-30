@@ -692,32 +692,29 @@ class OTelEnv {
     String? fallbackLengthVar,
     String? fallbackCountVar,
   }) {
-    int? parseLimit(String primaryVar, String? fallbackVar) {
-      var val = _getEnv(primaryVar);
-      var varName = primaryVar;
+    return (
+      attributeValueLengthLimit: _parseLimit(lengthVar, fallbackLengthVar),
+      attributeCountLimit: _parseLimit(countVar, fallbackCountVar),
+    );
+  }
 
-      if (val == null && fallbackVar != null) {
-        val = _getEnv(fallbackVar);
-        varName = fallbackVar;
-      }
+  static int? _parseLimit(String primaryVar, [String? fallbackVar]) {
+    int? parseOne(String varName) {
+      final value = _getEnv(varName);
+      if (value == null) return null;
 
-      if (val != null) {
-        final limit = int.tryParse(val);
-        if (limit != null && limit >= 0) {
-          return limit;
-        }
-        if (OTelLog.isWarn()) {
-          OTelLog.warn('OTelEnv: Invalid value "$val" for $varName. '
-              'Limit must be a non-negative integer.');
-        }
+      final limit = int.tryParse(value);
+      if (limit != null && limit >= 0) return limit;
+
+      if (OTelLog.isWarn()) {
+        OTelLog.warn('OTelEnv: Invalid value "$value" for $varName. '
+            'Limit must be a non-negative integer.');
       }
       return null;
     }
 
-    return (
-      attributeValueLengthLimit: parseLimit(lengthVar, fallbackLengthVar),
-      attributeCountLimit: parseLimit(countVar, fallbackCountVar),
-    );
+    return parseOne(primaryVar) ??
+        (fallbackVar != null ? parseOne(fallbackVar) : null);
   }
 
   /// Get general attribute limits from environment variables.
@@ -761,47 +758,33 @@ class OTelEnv {
   /// Returns a [SpanLimitsEnvironmentValues] containing the span limits read
   /// from environment variables.
   ///
-  /// `attributeCountLimit` and `attributeValueLengthLimit` fall back to
+  /// Attribute count and value length limits fall back to
   /// general attribute limits (`OTEL_ATTRIBUTE_COUNT_LIMIT` and
-  /// `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`). All other limits have no fallback.
-  /// Unset or invalid values (not a non-negative integer) give null, with a
-  /// warning logged for invalid ones.
+  /// `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`). Event and link count limits have no
+  /// fallback.
+  /// An invalid primary value is treated as unset before trying its fallback.
+  /// Values with no valid fallback give null, with a warning logged for each
+  /// invalid value.
   static SpanLimitsEnvironmentValues getSpanLimits() {
-    int? parseLimit(String primaryVar, [String? fallbackVar]) {
-      var val = _getEnv(primaryVar);
-      var varName = primaryVar;
-
-      if (val == null && fallbackVar != null) {
-        val = _getEnv(fallbackVar);
-        varName = fallbackVar;
-      }
-
-      if (val != null) {
-        final limit = int.tryParse(val);
-        if (limit != null && limit >= 0) {
-          return limit;
-        }
-        if (OTelLog.isWarn()) {
-          OTelLog.warn('OTelEnv: Invalid value "$val" for $varName. '
-              'Limit must be a non-negative integer.');
-        }
-      }
-      return null;
-    }
-
     return (
-      attributeCountLimit: parseLimit(
+      attributeCountLimit: _parseLimit(
         otelSpanAttributeCountLimit,
         otelAttributeCountLimit,
       ),
-      attributeValueLengthLimit: parseLimit(
+      attributeValueLengthLimit: _parseLimit(
         otelSpanAttributeValueLengthLimit,
         otelAttributeValueLengthLimit,
       ),
-      eventCountLimit: parseLimit(otelSpanEventCountLimit),
-      linkCountLimit: parseLimit(otelSpanLinkCountLimit),
-      attributePerEventCountLimit: parseLimit(otelEventAttributeCountLimit),
-      attributePerLinkCountLimit: parseLimit(otelLinkAttributeCountLimit),
+      eventCountLimit: _parseLimit(otelSpanEventCountLimit),
+      linkCountLimit: _parseLimit(otelSpanLinkCountLimit),
+      attributePerEventCountLimit: _parseLimit(
+        otelEventAttributeCountLimit,
+        otelAttributeCountLimit,
+      ),
+      attributePerLinkCountLimit: _parseLimit(
+        otelLinkAttributeCountLimit,
+        otelAttributeCountLimit,
+      ),
     );
   }
 

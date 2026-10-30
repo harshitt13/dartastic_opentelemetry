@@ -39,6 +39,8 @@ class SpanLimitEnforcer {
   int _droppedAttributesCount = 0;
   int _droppedEventsCount = 0;
   int _droppedLinksCount = 0;
+  int _eventCount = 0;
+  int _linkCount = 0;
 
   final Map<SpanEvent, int> _droppedAttributesPerEvent = {};
   final Map<SpanLink, int> _droppedAttributesPerLink = {};
@@ -107,15 +109,12 @@ class SpanLimitEnforcer {
   /// Processes creation-time links.
   List<SpanLink>? processCreationLinks(List<SpanLink>? links) {
     if (links == null) return null;
-    if (links.isEmpty) return links;
 
-    var anyModified = false;
     final keptLinks = <SpanLink>[];
     for (final link in links) {
       if (keptLinks.length >= spanLimits.linkCountLimit) {
         _droppedLinksCount++;
         logSpanDiscard();
-        anyModified = true;
         continue;
       }
 
@@ -127,7 +126,6 @@ class SpanLimitEnforcer {
       final attrResult = linkAttributeLimiter.limitAttributes(link.attributes);
       if (attrResult.hadDiscardOrTruncation) {
         logSpanDiscard();
-        anyModified = true;
         final limitedLink = OTel.spanLink(
           link.spanContext,
           attributes: attrResult.attributes,
@@ -140,28 +138,22 @@ class SpanLimitEnforcer {
         keptLinks.add(link);
       }
     }
-    if (!anyModified && keptLinks.length == links.length) {
-      return links;
-    }
+    _linkCount = keptLinks.length;
     return keptLinks;
   }
 
   /// Processes creation-time events.
   List<SpanEvent>? processCreationEvents(List<SpanEvent>? events) {
     if (events == null) return null;
-    if (events.isEmpty) return events;
 
-    var anyModified = false;
     final keptEvents = <SpanEvent>[];
     for (final event in events) {
       if (event.name.isEmpty) {
-        anyModified = true;
         continue;
       }
       if (keptEvents.length >= spanLimits.eventCountLimit) {
         _droppedEventsCount++;
         logSpanDiscard();
-        anyModified = true;
         continue;
       }
 
@@ -174,7 +166,6 @@ class SpanLimitEnforcer {
           eventAttributeLimiter.limitAttributes(event.attributes);
       if (attrResult.hadDiscardOrTruncation) {
         logSpanDiscard();
-        anyModified = true;
         final limitedEvent = OTel.spanEvent(
           event.name,
           attrResult.attributes,
@@ -188,9 +179,7 @@ class SpanLimitEnforcer {
         keptEvents.add(event);
       }
     }
-    if (!anyModified && keptEvents.length == events.length) {
-      return events;
-    }
+    _eventCount = keptEvents.length;
     return keptEvents;
   }
 
@@ -198,6 +187,8 @@ class SpanLimitEnforcer {
   ///
   /// Returns the limited value to set on the span, or `null` if dropped.
   Object? evaluateSpanAttribute(String key, Object value) {
+    if (key.isEmpty) return value;
+
     final isExisting = _spanAttributeKeys.contains(key);
 
     if (!isExisting &&
@@ -257,15 +248,16 @@ class SpanLimitEnforcer {
   }
 
   /// Processes adding a span event. Returns the limited event, or `null` if dropped.
-  SpanEvent? processAddEvent(SpanEvent spanEvent, int currentEventCount) {
+  SpanEvent? processAddEvent(SpanEvent spanEvent) {
     if (spanEvent.name.isEmpty) {
       return null;
     }
-    if (currentEventCount >= spanLimits.eventCountLimit) {
+    if (_eventCount >= spanLimits.eventCountLimit) {
       _droppedEventsCount++;
       logSpanDiscard();
       return null;
     }
+    _eventCount++;
 
     if (spanEvent.attributes == null) {
       return spanEvent;
@@ -291,12 +283,13 @@ class SpanLimitEnforcer {
   }
 
   /// Processes adding a span link. Returns the limited link, or `null` if dropped.
-  SpanLink? processAddLink(SpanLink spanLink, int currentLinkCount) {
-    if (currentLinkCount >= spanLimits.linkCountLimit) {
+  SpanLink? processAddLink(SpanLink spanLink) {
+    if (_linkCount >= spanLimits.linkCountLimit) {
       _droppedLinksCount++;
       logSpanDiscard();
       return null;
     }
+    _linkCount++;
 
     if (spanLink.attributes.isEmpty) {
       return spanLink;
