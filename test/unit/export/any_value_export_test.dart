@@ -436,6 +436,53 @@ void main() {
     expect(text, isNot(contains('<3 bytes>')));
   });
 
+  for (final kind in ['array', 'map']) {
+    test('Prometheus $kind depth truncation reports once per label conversion',
+        () async {
+      final errors = <Object>[];
+      OTelErrorHandling.handler = (error, _) => errors.add(error);
+      addTearDown(OTelErrorHandling.resetToDefault);
+      final exporter = PrometheusExporter();
+      addTearDown(exporter.shutdown);
+      var value = kind == 'array'
+          ? AnyValueArray(List.filled(1000, const AnyValueInt(1)))
+          : AnyValueMap(
+              {for (var i = 0; i < 1000; i++) '$i': const AnyValueInt(1)});
+      for (var i = 0; i < 31; i++) {
+        value = AnyValueArray([value]);
+      }
+      final now = DateTime.utc(2026);
+      final data = MetricData(resource: resource, metrics: [
+        Metric(name: 'depth', type: MetricType.gauge, points: [
+          MetricPoint<int>(
+              attributes: OTel.attributesFromMap({'deep': value}),
+              startTime: now,
+              endTime: now,
+              value: 1),
+        ]),
+      ]);
+
+      for (var call = 1; call <= 2; call++) {
+        expect(await exporter.export(data), isTrue);
+        expect(errors, hasLength(call));
+        expect(errors.last.toString(), contains('maximum depth of 32'));
+        // Decode the quoted label and its JSON collection to verify every
+        // truncated leaf remains a null placeholder in the exported value.
+        final label = RegExp(r'deep=("(?:\\.|[^"\\])*")')
+            .firstMatch(exporter.prometheusData)!
+            .group(1)!;
+        Object? decoded = jsonDecode(jsonDecode(label) as String);
+        for (var i = 0; i < 31; i++) {
+          decoded = (decoded as List).single;
+        }
+        final leaves =
+            kind == 'array' ? decoded as List : (decoded as Map).values;
+        expect(leaves, hasLength(1000));
+        expect(leaves, everyElement(isNull));
+      }
+    });
+  }
+
   test('all gRPC exporters preserve the AnyValue hierarchy', () async {
     final traceService = _TraceService();
     final logService = _LogService();

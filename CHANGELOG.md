@@ -45,8 +45,9 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   that attribute values support the full `AnyValue` hierarchy
   ([#236](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/236),
   [API #123](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry_api/pull/123)).
-  Directly constructed values exceeding the OTLP encoder's 32-level depth
-  guard report once per encoding, including when multiple leaves are truncated.
+  Directly constructed values exceeding the 32-level depth guard report once
+  per OTLP encoding or Prometheus label conversion, including when multiple
+  leaves are truncated.
 
 ## [1.1.0-beta.17] - 2026-10-11
 
