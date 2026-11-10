@@ -104,6 +104,9 @@ class Histogram<T extends num> implements APIHistogram<T>, SDKInstrument {
     // First use the API implementation (no-op by default)
     _apiHistogram.record(value, attributes);
 
+    // Only record if enabled
+    if (!isEnabled()) return;
+
     if (value < 0) {
       if (OTelLog.isError()) {
         OTelLog.error(
@@ -111,9 +114,6 @@ class Histogram<T extends num> implements APIHistogram<T>, SDKInstrument {
       }
       return;
     }
-
-    // Only record if enabled
-    if (!isEnabled()) return;
 
     // Record the measurement in our storage
     _storage.record(value, attributes, Context.current);
