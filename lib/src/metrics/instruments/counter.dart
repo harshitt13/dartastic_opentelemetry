@@ -101,6 +101,9 @@ class Counter<T extends num> implements APICounter<T>, SDKInstrument {
     // First use the API implementation (no-op by default)
     _apiCounter.add(value, attributes);
 
+    // Disabled instruments drop measurements without validation or diagnostics.
+    if (!isEnabled()) return;
+
     // Check for negative values
     if (value < 0) {
       if (OTelLog.isError()) {
@@ -108,9 +111,6 @@ class Counter<T extends num> implements APICounter<T>, SDKInstrument {
       }
       return;
     }
-
-    // Only record if enabled
-    if (!isEnabled()) return;
 
     // Record the measurement in our storage
     _storage.record(value, attributes, Context.current);

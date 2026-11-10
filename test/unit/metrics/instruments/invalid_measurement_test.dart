@@ -86,6 +86,50 @@ void invalidMeasurements<T extends num>(T negative, T zero, T positive) {
           hasLength(3));
     });
 
+    test('disabled counter silently drops direct and map measurements', () {
+      final counter =
+          meter.createCounter<T>(name: 'disabled-counter') as Counter<T>;
+      meter.provider.enabled = false;
+      logs.clear();
+
+      counter.add(negative);
+      counter.addWithMap(negative, {'invalid': true});
+      counter.add(positive);
+      counter.addWithMap(positive, {'valid': true});
+
+      expect(logs, isEmpty);
+      expect(counter.collectPoints(), isEmpty);
+      meter.provider.enabled = true;
+      expect(counter.collectMetrics(), isEmpty);
+      counter.add(negative);
+      expect(logs, hasLength(1));
+      counter.add(positive);
+      expect(counter.collectPoints().single.value, positive);
+    });
+
+    test('disabled histogram silently drops direct and map measurements', () {
+      final histogram =
+          meter.createHistogram<T>(name: 'disabled-histogram') as Histogram<T>;
+      meter.provider.enabled = false;
+      logs.clear();
+
+      histogram.record(negative);
+      histogram.recordWithMap(negative, {'invalid': true});
+      histogram.record(positive);
+      histogram.recordWithMap(positive, {'valid': true});
+
+      expect(logs, isEmpty);
+      expect(histogram.collectPoints(), isEmpty);
+      meter.provider.enabled = true;
+      expect(histogram.collectMetrics(), isEmpty);
+      histogram.record(negative);
+      expect(logs, hasLength(1));
+      histogram.record(positive);
+      final value = histogram.collectPoints().single.histogram();
+      expect(value.count, 1);
+      expect(value.sum, positive);
+    });
+
     test('mismatched point logs a warning and returns a safe default', () {
       final now = DateTime.now();
       final point = MetricPoint<T>.gauge(

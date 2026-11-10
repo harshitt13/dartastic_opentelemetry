@@ -24,7 +24,8 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 
 - Counter and histogram instruments log and drop negative measurements, including
-  map helpers, without affecting collected values. This follows the non-negative
+  map helpers, without affecting collected values. Disabled instruments drop
+  measurements silently. This follows the non-negative
   measurement expectation in `metrics/api.md` and the MUST NOT throw requirement
   in `error-handling.md`
   ([#322](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/pull/322)).
