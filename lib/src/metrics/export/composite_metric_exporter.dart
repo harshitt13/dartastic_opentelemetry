@@ -2,8 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelErrorHandling, OTelLog;
+    show OTelLog;
 
+import '../../export/export_error_scope.dart';
 import '../data/metric_data.dart';
 import '../metric_exporter.dart';
 
@@ -54,16 +55,18 @@ class CompositeMetricExporter implements MetricExporter {
 
     var success = true;
     for (final exporter in _exporters) {
-      try {
-        final result = await exporter.export(data);
-        if (!result) {
-          throw StateError('CompositeMetricExporter: export failed');
+      await ExportErrorScope.run((scope) async {
+        try {
+          final result = await exporter.export(data);
+          if (!result) {
+            throw StateError('CompositeMetricExporter: export failed');
+          }
+          success = success && result;
+        } catch (e, stackTrace) {
+          scope.reportIfNeeded(e, stackTrace);
+          success = false;
         }
-        success = success && result;
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
-        success = false;
-      }
+      });
     }
 
     return success;
@@ -84,16 +87,18 @@ class CompositeMetricExporter implements MetricExporter {
 
     var success = true;
     for (final exporter in _exporters) {
-      try {
-        final result = await exporter.forceFlush();
-        if (!result) {
-          throw StateError('CompositeMetricExporter: forceFlush failed');
+      await ExportErrorScope.run((scope) async {
+        try {
+          final result = await exporter.forceFlush();
+          if (!result) {
+            throw StateError('CompositeMetricExporter: forceFlush failed');
+          }
+          success = success && result;
+        } catch (e, stackTrace) {
+          scope.reportIfNeeded(e, stackTrace);
+          success = false;
         }
-        success = success && result;
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
-        success = false;
-      }
+      });
     }
 
     return success;
@@ -114,16 +119,18 @@ class CompositeMetricExporter implements MetricExporter {
     _shutdown = true;
     var success = true;
     for (final exporter in _exporters) {
-      try {
-        final result = await exporter.shutdown();
-        if (!result) {
-          throw StateError('CompositeMetricExporter: shutdown failed');
+      await ExportErrorScope.run((scope) async {
+        try {
+          final result = await exporter.shutdown();
+          if (!result) {
+            throw StateError('CompositeMetricExporter: shutdown failed');
+          }
+          success = success && result;
+        } catch (e, stackTrace) {
+          scope.reportIfNeeded(e, stackTrace);
+          success = false;
         }
-        success = success && result;
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
-        success = false;
-      }
+      });
     }
 
     return success;

@@ -8,6 +8,7 @@ import 'package:meta/meta.dart';
 
 import '../../../../dartastic_opentelemetry.dart';
 import '../../../../proto/collector/metrics/v1/metrics_service.pbgrpc.dart';
+import '../../../export/export_error_scope.dart';
 import '../../../export/otlp_user_agent.dart';
 import '../../../trace/export/otlp/certificate_utils_io.dart';
 import 'metric_transformer.dart';
@@ -64,7 +65,7 @@ class OtlpGrpcMetricExporter implements MetricExporter {
         onBadCertificate: null,
       );
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+      ExportErrorScope.report(e, stackTrace);
       // Fall back to default secure credentials on error
       return const ChannelCredentials.secure();
     }
@@ -158,7 +159,7 @@ class OtlpGrpcMetricExporter implements MetricExporter {
       }
       return true;
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+      ExportErrorScope.report(e, stackTrace);
       return false;
     }
   }
@@ -197,7 +198,7 @@ class OtlpGrpcMetricExporter implements MetricExporter {
       }
       return true;
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+      ExportErrorScope.report(e, stackTrace);
       return false;
     }
   }

@@ -43,6 +43,8 @@ class OTel {
   /// Pass `null` to restore the installed factory's default logging handler,
   /// or a no-op callback to suppress errors. A handler may throw deliberately
   /// for strict error handling, as supported by [OTelErrorHandling].
+  /// Span export failures are reported by the span processor. When calling a
+  /// span exporter directly, the caller must handle its thrown export errors.
   ///
   /// ```dart
   /// OTel.setErrorHandler((error, stackTrace) {

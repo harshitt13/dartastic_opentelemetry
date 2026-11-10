@@ -442,11 +442,7 @@ void main() {
       final exporter = createExporter(maxRetries: 2);
       final spans = createTestSpans();
 
-      try {
-        await exporter.export(spans);
-      } catch (_) {
-        // Expected
-      }
+      await SimpleSpanProcessor(exporter).onEnd(spans.first);
 
       final allLogs = logMessages.join('\n');
       // Should have error logs for the failed request
@@ -468,11 +464,7 @@ void main() {
       final exporter = createExporter();
       final spans = createTestSpans();
 
-      try {
-        await exporter.export(spans);
-      } catch (_) {
-        // Expected
-      }
+      await SimpleSpanProcessor(exporter).onEnd(spans.first);
 
       final allLogs = logMessages.join('\n');
       expect(allLogs, contains('status code 400'));
@@ -538,11 +530,7 @@ void main() {
       );
       final spans = createTestSpans();
 
-      try {
-        await exporter.export(spans);
-      } catch (_) {
-        // Expected - connection refused
-      }
+      await SimpleSpanProcessor(exporter).onEnd(spans.first);
 
       final allLogs = logMessages.join('\n');
       // The default handler preserves the transport error and its stack.

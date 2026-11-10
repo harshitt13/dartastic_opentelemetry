@@ -5,11 +5,12 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelErrorHandling, OTelLog;
+    show OTelLog;
 import 'package:grpc/grpc.dart';
 import 'package:meta/meta.dart';
 
 import '../../../../proto/opentelemetry_proto_dart.dart' as proto;
+import '../../../export/export_error_scope.dart';
 import '../../../export/otlp_user_agent.dart';
 import '../../../trace/export/otlp/certificate_utils_io.dart';
 import '../../readable_log_record.dart';
@@ -81,7 +82,7 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
         onBadCertificate: null,
       );
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+      ExportErrorScope.report(e, stackTrace);
       return const ChannelCredentials.secure();
     }
   }
@@ -98,14 +99,14 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
         await _channel!.shutdown();
         await Future<void>.delayed(const Duration(milliseconds: 100));
       } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+        ExportErrorScope.report(e, stackTrace);
       }
 
       try {
         await _channel!.terminate();
         await Future<void>.delayed(const Duration(milliseconds: 100));
       } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+        ExportErrorScope.report(e, stackTrace);
       }
 
       _channel = null;
@@ -267,7 +268,7 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
           'OtlpGrpcLogRecordExporter: Beginning export of ${logRecords.length} log records');
     }
 
-    final exportFuture = _export(logRecords);
+    final exportFuture = _exportWithErrorHandling(logRecords);
     _pendingExports.add(exportFuture);
 
     try {
@@ -277,19 +278,24 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
             'OtlpGrpcLogRecordExporter: Export completed with result: $result');
       }
       return result;
+    } finally {
+      _pendingExports.remove(exportFuture);
+    }
+  }
+
+  Future<ExportResult> _exportWithErrorHandling(
+      List<ReadableLogRecord> logRecords) async {
+    try {
+      return await _export(logRecords);
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
       if (_isShutdown &&
           e is StateError &&
           e.message.contains('shut down during')) {
-        if (OTelLog.isDebug()) {
-          OTelLog.debug(
-              'OtlpGrpcLogRecordExporter: Export was interrupted by shutdown');
-        }
+        ExportErrorScope.suppress();
+      } else {
+        ExportErrorScope.report(e, stackTrace);
       }
       return ExportResult.failure;
-    } finally {
-      _pendingExports.remove(exportFuture);
     }
   }
 
@@ -303,6 +309,8 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
           'OtlpGrpcLogRecordExporter: Attempting to export ${logRecords.length} log records');
     }
 
+    Object? lastError;
+    StackTrace? lastStack;
     var attempts = 0;
     final maxAttempts = _config.maxRetries + 1;
 
@@ -311,11 +319,15 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
 
       try {
         if (wasShutdownDuringRetry && attempts > 0) {
+          final error = lastError;
+          if (error != null) Error.throwWithStackTrace(error, lastStack!);
           return ExportResult.failure;
         }
 
         return await _tryExport(logRecords);
-      } on GrpcError catch (e) {
+      } on GrpcError catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         if (wasShutdownDuringRetry) {
           rethrow;
         }
@@ -338,7 +350,9 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
           await _setupChannel();
         }
         attempts++;
-      } catch (e) {
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         if (wasShutdownDuringRetry) {
           rethrow;
         }
@@ -373,14 +387,11 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
         OTelLog.debug(
             'OtlpGrpcLogRecordExporter: Waiting for ${_pendingExports.length} pending exports');
       }
-      try {
-        await Future.wait(_pendingExports);
-        if (OTelLog.isDebug()) {
-          OTelLog.debug(
-              'OtlpGrpcLogRecordExporter: All pending exports completed');
-        }
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+
+      await Future.wait(_pendingExports);
+      if (OTelLog.isDebug()) {
+        OTelLog.debug(
+            'OtlpGrpcLogRecordExporter: All pending exports completed');
       }
     }
   }
@@ -398,12 +409,13 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
 
     final pendingExportsCopy = List<Future<void>>.of(_pendingExports);
 
-    if (pendingExportsCopy.isNotEmpty) {
-      if (OTelLog.isDebug()) {
-        OTelLog.debug(
-            'OtlpGrpcLogRecordExporter: Waiting for ${pendingExportsCopy.length} pending exports');
-      }
-      try {
+    try {
+      if (pendingExportsCopy.isNotEmpty) {
+        if (OTelLog.isDebug()) {
+          OTelLog.debug(
+              'OtlpGrpcLogRecordExporter: Waiting for ${pendingExportsCopy.length} pending exports');
+        }
+
         await Future.wait(pendingExportsCopy)
             .timeout(const Duration(seconds: 10), onTimeout: () {
           if (OTelLog.isDebug()) {
@@ -412,12 +424,10 @@ class OtlpGrpcLogRecordExporter implements LogRecordExporter {
           }
           return Future.value([]);
         });
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
       }
+    } finally {
+      await _cleanupChannel();
     }
-
-    await _cleanupChannel();
 
     if (OTelLog.isDebug()) {
       OTelLog.debug('OtlpGrpcLogRecordExporter: Shutdown complete');

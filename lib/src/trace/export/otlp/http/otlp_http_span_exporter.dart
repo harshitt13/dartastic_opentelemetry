@@ -7,7 +7,7 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelErrorHandling, OTelLog;
+    show OTelLog;
 import 'package:http/http.dart' as http;
 
 import '../../../../export/otlp_http_exception.dart';
@@ -215,8 +215,7 @@ class OtlpHttpSpanExporter implements SpanExporter {
       if (OTelLog.isDebug()) {
         OTelLog.debug('OtlpHttpSpanExporter: Export completed successfully');
       }
-    } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+    } catch (e) {
       if (_isShutdown &&
           e is StateError &&
           e.message.contains('shut down during')) {
@@ -344,8 +343,8 @@ class OtlpHttpSpanExporter implements SpanExporter {
         if (OTelLog.isDebug()) {
           OTelLog.debug('OtlpHttpSpanExporter: All pending exports completed');
         }
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+      } catch (_) {
+        // The export future delivers its error to the caller/processor.
       }
     } else {
       if (OTelLog.isDebug()) {
@@ -376,32 +375,34 @@ class OtlpHttpSpanExporter implements SpanExporter {
 
     // Wait for pending exports but don't start any new ones
     // Use a timeout to prevent hanging if exports take too long
-    if (pendingExportsCopy.isNotEmpty) {
-      if (OTelLog.isDebug()) {
-        OTelLog.debug(
-          'OtlpHttpSpanExporter: Waiting for ${pendingExportsCopy.length} pending exports with timeout',
-        );
+    try {
+      if (pendingExportsCopy.isNotEmpty) {
+        if (OTelLog.isDebug()) {
+          OTelLog.debug(
+            'OtlpHttpSpanExporter: Waiting for ${pendingExportsCopy.length} pending exports with timeout',
+          );
+        }
+        try {
+          // Use a generous timeout but don't wait forever
+          await Future.wait(pendingExportsCopy).timeout(
+            const Duration(seconds: 10),
+            onTimeout: () {
+              if (OTelLog.isDebug()) {
+                OTelLog.debug(
+                  'OtlpHttpSpanExporter: Timeout waiting for exports to complete',
+                );
+              }
+              return Future.value([]);
+            },
+          );
+        } catch (_) {
+          // The export future delivers its error to the caller/processor.
+        }
       }
-      try {
-        // Use a generous timeout but don't wait forever
-        await Future.wait(pendingExportsCopy).timeout(
-          const Duration(seconds: 10),
-          onTimeout: () {
-            if (OTelLog.isDebug()) {
-              OTelLog.debug(
-                'OtlpHttpSpanExporter: Timeout waiting for exports to complete',
-              );
-            }
-            return Future.value([]);
-          },
-        );
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
-      }
+    } finally {
+      // Close the HTTP client even when a custom error handler throws.
+      _client.close();
     }
-
-    // Close the HTTP client to release resources
-    _client.close();
 
     if (OTelLog.isDebug()) {
       OTelLog.debug('OtlpHttpSpanExporter: Shutdown complete');

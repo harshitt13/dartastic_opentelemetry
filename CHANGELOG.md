@@ -27,7 +27,7 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   processor, metric reader, and resource detector failures through the shared
   API/SDK handler, as required by the MUST in the specification's
   `error-handling.md`, Configuring Error Handlers
-  ([#232](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/232)).
+  ([#320](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/pull/320) by @harshitt13).
   Set the handler before or after `OTel.initialize()`; it receives errors and
   available stack traces even with diagnostic logging disabled. A no-op handler
   suppresses error diagnostics, and `null` restores the factory's default handler.

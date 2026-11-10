@@ -7,9 +7,10 @@ import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelErrorHandling, OTelLog;
+    show OTelLog;
 import 'package:http/http.dart' as http;
 
+import '../../../../export/export_error_scope.dart';
 import '../../../../export/otlp_http_exception.dart';
 import '../../../../export/otlp_http_protocol.dart';
 import '../../../../export/otlp_json.dart';
@@ -188,7 +189,7 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
           'OtlpHttpLogRecordExporter: Beginning export of ${logRecords.length} log records');
     }
 
-    final exportFuture = _export(logRecords);
+    final exportFuture = _exportWithErrorHandling(logRecords);
     _pendingExports.add(exportFuture);
 
     try {
@@ -198,20 +199,24 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
             'OtlpHttpLogRecordExporter: Export completed with result: $result');
       }
       return result;
+    } finally {
+      _pendingExports.remove(exportFuture);
+    }
+  }
+
+  Future<ExportResult> _exportWithErrorHandling(
+      List<ReadableLogRecord> logRecords) async {
+    try {
+      return await _export(logRecords);
     } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
       if (_isShutdown &&
           e is StateError &&
           e.message.contains('shut down during')) {
-        if (OTelLog.isDebug()) {
-          OTelLog.debug(
-              'OtlpHttpLogRecordExporter: Export was interrupted by shutdown');
-        }
-        return ExportResult.failure;
+        ExportErrorScope.suppress();
+      } else {
+        ExportErrorScope.report(e, stackTrace);
       }
       return ExportResult.failure;
-    } finally {
-      _pendingExports.remove(exportFuture);
     }
   }
 
@@ -225,6 +230,8 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
           'OtlpHttpLogRecordExporter: Attempting to export ${logRecords.length} log records to ${_config.endpoint}');
     }
 
+    Object? lastError;
+    StackTrace? lastStack;
     var attempts = 0;
     final maxAttempts = _config.maxRetries + 1;
 
@@ -233,6 +240,8 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
 
       try {
         if (wasShutdownDuringRetry && attempts > 0) {
+          final error = lastError;
+          if (error != null) Error.throwWithStackTrace(error, lastStack!);
           if (OTelLog.isDebug()) {
             OTelLog.debug(
                 'OtlpHttpLogRecordExporter: Export interrupted by shutdown');
@@ -241,7 +250,9 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
         }
 
         return await _tryExport(logRecords);
-      } on http.ClientException catch (e) {
+      } on http.ClientException catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         if (wasShutdownDuringRetry) {
           rethrow;
         }
@@ -264,7 +275,9 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
         }
         await Future<void>.delayed(delay);
         attempts++;
-      } catch (e) {
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         if (wasShutdownDuringRetry) {
           rethrow;
         }
@@ -300,14 +313,11 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
         OTelLog.debug(
             'OtlpHttpLogRecordExporter: Waiting for ${_pendingExports.length} pending exports');
       }
-      try {
-        await Future.wait(_pendingExports);
-        if (OTelLog.isDebug()) {
-          OTelLog.debug(
-              'OtlpHttpLogRecordExporter: All pending exports completed');
-        }
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+
+      await Future.wait(_pendingExports);
+      if (OTelLog.isDebug()) {
+        OTelLog.debug(
+            'OtlpHttpLogRecordExporter: All pending exports completed');
       }
     }
   }
@@ -325,12 +335,13 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
 
     final pendingExportsCopy = List<Future<void>>.of(_pendingExports);
 
-    if (pendingExportsCopy.isNotEmpty) {
-      if (OTelLog.isDebug()) {
-        OTelLog.debug(
-            'OtlpHttpLogRecordExporter: Waiting for ${pendingExportsCopy.length} pending exports');
-      }
-      try {
+    try {
+      if (pendingExportsCopy.isNotEmpty) {
+        if (OTelLog.isDebug()) {
+          OTelLog.debug(
+              'OtlpHttpLogRecordExporter: Waiting for ${pendingExportsCopy.length} pending exports');
+        }
+
         await Future.wait(pendingExportsCopy)
             .timeout(const Duration(seconds: 10), onTimeout: () {
           if (OTelLog.isDebug()) {
@@ -339,12 +350,10 @@ class OtlpHttpLogRecordExporter implements LogRecordExporter {
           }
           return Future.value([]);
         });
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
       }
+    } finally {
+      _client.close();
     }
-
-    _client.close();
 
     if (OTelLog.isDebug()) {
       OTelLog.debug('OtlpHttpLogRecordExporter: Shutdown complete');

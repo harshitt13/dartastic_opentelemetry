@@ -8,6 +8,7 @@ import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart';
 import 'package:synchronized/synchronized.dart';
 
 import '../../environment/otel_env.dart';
+import '../../export/export_error_scope.dart';
 import '../log_record_processor.dart';
 import '../readable_log_record.dart';
 import 'log_record_exporter.dart';
@@ -202,11 +203,7 @@ class BatchLogRecordProcessor implements LogRecordProcessor {
       [BatchLogRecordProcessorConfig? config])
       : _config = config ?? const BatchLogRecordProcessorConfig() {
     _timer = Timer.periodic(_config.scheduleDelay, (_) async {
-      try {
-        await _exportBatch();
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
-      }
+      await _exportBatch();
     });
   }
 
@@ -268,16 +265,18 @@ class BatchLogRecordProcessor implements LogRecordProcessor {
           'BatchLogRecordProcessor: Exporting ${logsToExport.length} log records');
     }
 
-    try {
-      final result =
-          await exporter.export(logsToExport).timeout(_config.exportTimeout);
+    await ExportErrorScope.run((scope) async {
+      try {
+        final result =
+            await exporter.export(logsToExport).timeout(_config.exportTimeout);
 
-      if (result == ExportResult.failure) {
-        throw StateError('BatchLogRecordProcessor: Export failed');
+        if (result == ExportResult.failure) {
+          throw StateError('BatchLogRecordProcessor: Export failed');
+        }
+      } catch (e, stackTrace) {
+        scope.reportIfNeeded(e, stackTrace);
       }
-    } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
-    }
+    });
   }
 
   @override
@@ -348,15 +347,17 @@ class BatchLogRecordProcessor implements LogRecordProcessor {
       return;
     }
 
-    try {
-      final result =
-          await exporter.export(logsToExport).timeout(_config.exportTimeout);
-      if (result == ExportResult.failure) {
-        throw StateError(
-            'BatchLogRecordProcessor: Export failed during shutdown');
+    await ExportErrorScope.run((scope) async {
+      try {
+        final result =
+            await exporter.export(logsToExport).timeout(_config.exportTimeout);
+        if (result == ExportResult.failure) {
+          throw StateError(
+              'BatchLogRecordProcessor: Export failed during shutdown');
+        }
+      } catch (e, stackTrace) {
+        scope.reportIfNeeded(e, stackTrace);
       }
-    } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
-    }
+    });
   }
 }

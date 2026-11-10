@@ -173,6 +173,48 @@ void main() {
       await server.shutdown();
     });
 
+    test('shutdown during backoff reports the original gRPC error once',
+        () async {
+      final service = _AlwaysUnavailableLogsService();
+      final server = Server.create(services: [service]);
+      await server.serve(port: 0);
+      addTearDown(server.shutdown);
+      final errors = <Object>[];
+      final stacks = <StackTrace?>[];
+      OTel.setErrorHandler((error, stack) {
+        errors.add(error);
+        stacks.add(stack);
+      });
+      addTearDown(() => OTel.setErrorHandler(null));
+      final retrying = Completer<void>();
+      OTelLog.currentLevel = LogLevel.debug;
+      OTelLog.logFunction = (message) {
+        if (message.contains('Retrying after') && !retrying.isCompleted) {
+          retrying.complete();
+        }
+      };
+      final exporter =
+          OtlpGrpcLogRecordExporter(OtlpGrpcLogRecordExporterConfig(
+        endpoint: 'localhost:${server.port}',
+        insecure: true,
+        maxRetries: 1,
+        baseDelay: const Duration(milliseconds: 100),
+        maxDelay: const Duration(milliseconds: 100),
+      ));
+      addTearDown(exporter.shutdown);
+      final pending = exporter.export([record('shutdown')]);
+      await retrying.future;
+      await exporter.shutdown();
+      expect(await pending, ExportResult.failure);
+      expect(service.callCount, 1);
+      expect(errors, hasLength(1));
+      expect(
+          errors.single,
+          isA<GrpcError>()
+              .having((e) => e.code, 'code', StatusCode.unavailable));
+      expect(stacks.single, isNotNull);
+    });
+
     test('connection refused fails the export', () async {
       final exporter = exporterFor(1, maxRetries: 1); // nothing listens on 1
       final result = await exporter.export([record('refused')]).then((r) => r,

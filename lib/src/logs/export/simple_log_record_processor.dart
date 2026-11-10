@@ -3,6 +3,7 @@
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart';
 
+import '../../export/export_error_scope.dart';
 import '../log_record_processor.dart';
 import '../readable_log_record.dart';
 import 'log_record_exporter.dart';
@@ -35,17 +36,19 @@ class SimpleLogRecordProcessor implements LogRecordProcessor {
       return;
     }
 
-    ExportResult result;
-    try {
-      result = await exporter.export([logRecord]);
-    } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
-      return;
-    }
-    if (result == ExportResult.failure) {
-      OTelErrorHandling.report(
-          StateError('SimpleLogRecordProcessor: Export failed'));
-    }
+    await ExportErrorScope.run((scope) async {
+      ExportResult result;
+      try {
+        result = await exporter.export([logRecord]);
+      } catch (e, stackTrace) {
+        scope.reportIfNeeded(e, stackTrace);
+        return;
+      }
+      if (result == ExportResult.failure) {
+        scope.reportIfNeeded(
+            StateError('SimpleLogRecordProcessor: Export failed'));
+      }
+    });
   }
 
   @override

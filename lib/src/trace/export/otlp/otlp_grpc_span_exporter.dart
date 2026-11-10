@@ -385,8 +385,7 @@ class OtlpGrpcSpanExporter implements SpanExporter {
       if (OTelLog.isDebug()) {
         OTelLog.debug('OtlpGrpcSpanExporter: Export completed successfully');
       }
-    } catch (e, stackTrace) {
-      OTelErrorHandling.report(e, stackTrace);
+    } catch (e) {
       if (_isShutdown &&
           e is StateError &&
           e.message.contains('shut down during')) {
@@ -518,8 +517,8 @@ class OtlpGrpcSpanExporter implements SpanExporter {
         if (OTelLog.isDebug()) {
           OTelLog.debug('OtlpGrpcSpanExporter: All pending exports completed');
         }
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+      } catch (_) {
+        // The export future delivers its error to the caller/processor.
       }
     } else {
       if (OTelLog.isDebug()) {
@@ -569,8 +568,8 @@ class OtlpGrpcSpanExporter implements SpanExporter {
             return Future.value([]);
           },
         );
-      } catch (e, stackTrace) {
-        OTelErrorHandling.report(e, stackTrace);
+      } catch (_) {
+        // The export future delivers its error to the caller/processor.
       }
     }
 
