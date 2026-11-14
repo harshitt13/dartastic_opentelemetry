@@ -2,15 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:dartastic_opentelemetry_api/dartastic_opentelemetry_api.dart'
-    show OTelLog;
+    show Attribute, OTelLog;
 import '../../data/metric.dart';
 import '../../data/metric_data.dart';
 import '../../data/metric_point.dart';
 import '../../metric_exporter.dart';
 
-/// PrometheusExporter exports metrics in Prometheus format.
+/// Serializes cumulative metrics in Prometheus text format 0.0.4.
+/// Use `OTEL_METRICS_EXPORTER=prometheus` or `OTel.prometheusMetricReader()`
+/// for an HTTP pull exporter with collection on each scrape.
 /// This can be exposed via an HTTP endpoint or written to a file.
 /// This could be used on Dart server but not Flutter clients since
 /// Prometheus is a pull model and expects stable http servers and
@@ -62,13 +65,6 @@ class PrometheusExporter implements MetricExporter {
       return false;
     }
 
-    if (data.metrics.isEmpty) {
-      if (OTelLog.isLogExport()) {
-        OTelLog.logExport('PrometheusExporter: No metrics to export');
-      }
-      return true;
-    }
-
     try {
       if (OTelLog.isLogExport()) {
         OTelLog.logExport(
@@ -94,19 +90,50 @@ class PrometheusExporter implements MetricExporter {
   /// Converts metric data to Prometheus exposition format.
   String _toPrometheusFormat(MetricData data) {
     final buffer = StringBuffer();
+    final types = <String, String>{};
+    final resource = data.resource;
+    if (resource != null && resource.attributes.toMap().isNotEmpty) {
+      buffer.writeln('# HELP target_info Target metadata');
+      buffer.writeln('# TYPE target_info gauge');
+      buffer.writeln(
+          'target_info${_formatLabels(resource.attributes.toMap())} 1');
+      types['target_info'] = 'gauge';
+    }
 
     for (final metric in data.metrics) {
-      // Add HELP comment
-      if (metric.description != null) {
+      // A pull reader collects cumulative data. Do not misrepresent manually
+      // supplied delta points as cumulative Prometheus counters/histograms.
+      if (metric.type != MetricType.gauge &&
+          metric.temporality == AggregationTemporality.delta) {
+        if (OTelLog.isWarn()) {
+          OTelLog.warn('Prometheus dropped delta metric ${metric.name}');
+        }
+        continue;
+      }
+      final name = _metricName(metric);
+      final type = _getPrometheusType(metric);
+      final previousType = types[name];
+      if (name == 'target_info' ||
+          (previousType != null && previousType != type)) {
+        if (OTelLog.isWarn()) {
+          OTelLog.warn('Prometheus dropped conflicting metric $name');
+        }
+        continue;
+      }
+      if (previousType == null) {
+        types[name] = type;
+        // Add HELP comment
+        if (metric.description != null) {
+          buffer.writeln(
+            '# HELP $name ${_sanitizeComment(metric.description!)}',
+          );
+        }
+
+        // Add TYPE comment
         buffer.writeln(
-          '# HELP ${_sanitizeName(metric.name)} ${_sanitizeComment(metric.description!)}',
+          '# TYPE $name $type',
         );
       }
-
-      // Add TYPE comment
-      buffer.writeln(
-        '# TYPE ${_sanitizeName(metric.name)} ${_getPrometheusType(metric)}',
-      );
 
       // Add metric data points
       for (final point in metric.points) {
@@ -126,44 +153,64 @@ class PrometheusExporter implements MetricExporter {
     Metric metric,
     MetricPoint<dynamic> point,
   ) {
-    final metricName = _sanitizeName(metric.name);
+    final metricName = _metricName(metric);
+    final attributes = <String, dynamic>{...point.attributes.toMap()};
+    final scope = metric.instrumentationScope;
+    if (scope != null) {
+      attributes['otel_scope_name'] = scope.name;
+      if (scope.version != null) {
+        attributes['otel_scope_version'] = scope.version;
+      }
+      if (scope.schemaUrl != null) {
+        attributes['otel_scope_schema_url'] = scope.schemaUrl;
+      }
+      for (final entry in scope.attributes?.toMap().entries ??
+          <MapEntry<String, Attribute>>[]) {
+        final key = 'otel_scope_${_sanitizeName(entry.key)}';
+        if (key != 'otel_scope_name' &&
+            key != 'otel_scope_version' &&
+            key != 'otel_scope_schema_url') {
+          attributes[key] = entry.value;
+        }
+      }
+    }
 
     // Add labels
-    final labels = _formatLabels(point.attributes.toMap());
+    final labels = _formatLabels(attributes);
 
     if (point.value is HistogramValue) {
       // Histogram metrics require special handling
       final histogram = point.value as HistogramValue;
 
       // Write sum
-      buffer.writeln('${metricName}_sum$labels ${histogram.sum}');
+      buffer.writeln('${metricName}_sum$labels ${_number(histogram.sum)}');
 
       // Write count
       buffer.writeln('${metricName}_count$labels ${histogram.count}');
 
       // Write buckets
+      var count = 0;
       for (var i = 0; i < histogram.boundaries.length; i++) {
         final boundary = histogram.boundaries[i];
-        final count = histogram.bucketCounts[i];
+        count += histogram.bucketCounts[i];
         buffer.writeln(
-          '${metricName}_bucket{${_formatLabelsWithLe(point.attributes.toMap(), boundary)}} $count',
+          '${metricName}_bucket{${_formatLabelsWithLe(attributes, boundary)}} $count',
         );
       }
 
       // Add +Inf bucket
       buffer.writeln(
-        '${metricName}_bucket{${_formatLabelsWithLe(point.attributes.toMap(), double.infinity)}} ${histogram.count}',
+        '${metricName}_bucket{${_formatLabelsWithLe(attributes, double.infinity)}} ${histogram.count}',
       );
     } else {
       // Simple metrics (counters, gauges)
-      buffer.writeln('$metricName$labels ${point.value}');
+      buffer.writeln('$metricName$labels ${_number(point.value as num)}');
     }
   }
 
   /// Gets the Prometheus metric type from an OTel metric.
   String _getPrometheusType(Metric metric) {
-    if (metric.points.isNotEmpty &&
-        metric.points.first.value is HistogramValue) {
+    if (metric.type == MetricType.histogram) {
       return 'histogram';
     } else if (metric.type == MetricType.sum && metric.isMonotonic == true) {
       return 'counter';
@@ -171,6 +218,19 @@ class PrometheusExporter implements MetricExporter {
       return 'gauge';
     }
   }
+
+  String _metricName(Metric metric) {
+    final name = _sanitizeName(metric.name);
+    return _getPrometheusType(metric) == 'counter' && !name.endsWith('_total')
+        ? '${name}_total'
+        : name;
+  }
+
+  String _number(num value) => value == double.infinity
+      ? '+Inf'
+      : value == double.negativeInfinity
+          ? '-Inf'
+          : value.toString();
 
   /// Formats attributes as Prometheus labels.
   String _formatLabels(Map<String, dynamic> attributes) {
@@ -209,7 +269,10 @@ class PrometheusExporter implements MetricExporter {
   String _sanitizeName(String name) {
     // Replace invalid characters with underscores
     // Valid characters in Prometheus are: [a-zA-Z0-9_]
-    return name.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+    final sanitized = name.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+    return sanitized.isEmpty || RegExp(r'^[0-9]').hasMatch(sanitized)
+        ? '_$sanitized'
+        : sanitized;
   }
 
   /// Sanitizes a comment for HELP.
@@ -220,15 +283,13 @@ class PrometheusExporter implements MetricExporter {
 
   /// Sanitizes a label value.
   String _sanitizeValue(dynamic value) {
-    // Handle AttributeValue objects by extracting the raw value
-    if (value.toString().startsWith('AttributeValue(') &&
-        value.toString().endsWith(')')) {
-      // Extract the value inside AttributeValue(...)
-      final rawValue = value.toString().substring(
-            'AttributeValue('.length,
-            value.toString().length - 1,
-          );
-      value = rawValue;
+    if (value is Attribute) value = value.value;
+    if (value is List) {
+      value = jsonEncode(value.map((element) {
+        return element is double && !element.isFinite
+            ? element.toString()
+            : element;
+      }).toList());
     }
 
     // Escape quotes, backslashes, and newlines

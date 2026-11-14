@@ -21,6 +21,31 @@ Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [1.1.0-beta.18-wip]
 
+### Added
+
+- Native Prometheus pull reader and `GET /metrics`, selected with
+  `OTEL_METRICS_EXPORTER=prometheus`. Supports `OTEL_EXPORTER_PROMETHEUS_HOST`
+  (localhost), `OTEL_EXPORTER_PROMETHEUS_PORT` (9464), programmatic overrides,
+  factory creation, content negotiation for text 0.0.4, and SDK shutdown.
+  Browser builds retain warn-and-fallback behavior
+  ([#323](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/pull/323)).
+
+### Fixed
+
+- Prometheus histogram buckets accumulate disjoint bucket counts, as required
+  by the Prometheus compatibility specification (MUST). Scrapes collect fresh
+  cumulative data and expose one `target_info` resource metric. Empty exports
+  clear stale samples; non-finite numbers use Prometheus spellings
+  ([#323](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/pull/323)).
+
+### Changed
+
+- **BREAKING**: Monotonic Prometheus sums now use `_total` by default, as
+  recommended by the Prometheus compatibility specification. Names already
+  ending in `_total` remain unchanged. Update queries using unsuffixed names.
+  Non-monotonic sums remain gauges
+  ([#323](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/pull/323)).
+
 ## [1.1.0-beta.17] - 2026-10-11
 
 The spec-compliance issues this release closes ([#106](https://github.com/MindfulSoftwareLLC/dartastic_opentelemetry/issues/106), 
