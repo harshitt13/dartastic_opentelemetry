@@ -31,8 +31,10 @@ Versioning](https://semver.org/spec/v2.0.0.html).
   Set the handler before or after `OTel.initialize()`; it receives errors and
   available stack traces even with diagnostic logging disabled. A no-op handler
   suppresses error diagnostics, and `null` restores the factory's default handler.
-  OTLP retry failures are reported after retries finish, rather than at every
-  transport layer. Existing span exporter exception contracts remain unchanged.
+  OTLP retry failures are reported once after retries finish or shutdown
+  interrupts them. If the processor or reader times out first, it reports that
+  timeout and suppresses late export errors. Existing span exporter exception
+  contracts remain unchanged.
 
 ## [1.1.0-beta.17] - 2026-10-11
 

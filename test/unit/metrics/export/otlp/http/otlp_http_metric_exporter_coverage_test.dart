@@ -384,20 +384,28 @@ void main() {
     });
 
     test('shutdown catches error from failing pending export', () async {
-      await startServer(delay: const Duration(milliseconds: 200));
-      final exp = createExporter();
-
-      // Start export
-      // ignore: unawaited_futures
-      exp.export(makeMetrics()).catchError((_) => false);
-      await Future<void>.delayed(const Duration(milliseconds: 20));
-
-      // Kill server so export fails
-      await server.close(force: true);
-
-      // Shutdown should handle the error from the failing pending export
-      final result = await exp.shutdown();
-      expect(result, isTrue); // shutdown still returns true
+      final started = Completer<void>();
+      final disconnect = Completer<void>();
+      final failure = http.ClientException('forced disconnect');
+      final errors = <Object>[];
+      OTel.setErrorHandler((error, _) => errors.add(error));
+      addTearDown(() => OTel.setErrorHandler(null));
+      await http.runWithClient(() async {
+        final exp =
+            OtlpHttpMetricExporter(OtlpHttpMetricExporterConfig(maxRetries: 0));
+        final exporting = exp.export(makeMetrics());
+        await started.future;
+        final shuttingDown = exp.shutdown();
+        disconnect.complete();
+        expect(await exporting, isFalse);
+        expect(await shuttingDown, isTrue);
+        expect(errors, [same(failure)]);
+      },
+          () => MockClient((_) async {
+                started.complete();
+                await disconnect.future;
+                throw failure;
+              }));
     });
   });
 

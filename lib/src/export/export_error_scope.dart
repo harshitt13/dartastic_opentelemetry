@@ -14,6 +14,7 @@ class ExportErrorScope {
   static final Object _key = Object();
   final ExportErrorScope? _parent;
   bool _handled = false;
+  bool _finished = false;
   Object? _handlerException;
 
   ExportErrorScope._(this._parent);
@@ -21,12 +22,25 @@ class ExportErrorScope {
   /// Runs one operation with its own reporting state.
   static Future<T> run<T>(Future<T> Function(ExportErrorScope scope) action) {
     final scope = ExportErrorScope._(Zone.current[_key] as ExportErrorScope?);
-    return runZoned(() => action(scope), zoneValues: {_key: scope});
+    return runZoned(() async {
+      try {
+        return await action(scope);
+      } finally {
+        scope._finished = true;
+      }
+    }, zoneValues: {_key: scope});
   }
 
   /// Reports an original SDK error and marks enclosing operations as handled.
   static void report(Object error, [StackTrace? stackTrace]) {
     final scope = Zone.current[_key] as ExportErrorScope?;
+    if (scope?._handled ?? false) return;
+    // A timeout ends the owning operation without cancelling its exporter.
+    // Ignore late results, including those from nested composite delegates.
+    // A handled but still active parent must not suppress sibling delegates.
+    for (var current = scope; current != null; current = current._parent) {
+      if (current._finished) return;
+    }
     scope?._markHandled();
     try {
       OTelErrorHandling.report(error, stackTrace);

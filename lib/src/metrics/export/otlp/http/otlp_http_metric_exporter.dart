@@ -134,6 +134,8 @@ class OtlpHttpMetricExporter implements MetricExporter {
       );
     }
 
+    Object? lastError;
+    StackTrace? lastStack;
     var attempts = 0;
     final maxAttempts = _config.maxRetries + 1; // Initial attempt + retries
 
@@ -144,6 +146,8 @@ class OtlpHttpMetricExporter implements MetricExporter {
       try {
         // Only check for shutdown on retry attempts to ensure in-progress exports can complete
         if (wasShutdownDuringRetry && attempts > 0) {
+          final error = lastError;
+          if (error != null) Error.throwWithStackTrace(error, lastStack!);
           if (OTelLog.isDebug()) {
             OTelLog.debug(
               'OtlpHttpMetricExporter: Export interrupted by shutdown',
@@ -159,10 +163,12 @@ class OtlpHttpMetricExporter implements MetricExporter {
           );
         }
         return success;
-      } on http.ClientException catch (e) {
+      } on http.ClientException catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         // Check if the exporter was shut down while we were waiting
         if (wasShutdownDuringRetry) {
-          throw StateError('Exporter was shut down during export');
+          rethrow;
         }
 
         // Handle status code-based retries
@@ -185,10 +191,12 @@ class OtlpHttpMetricExporter implements MetricExporter {
         }
         await Future<void>.delayed(delay);
         attempts++;
-      } catch (e) {
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         // Check if we should stop retrying due to shutdown
         if (wasShutdownDuringRetry) {
-          throw StateError('Exporter was shut down during export');
+          rethrow;
         }
 
         if (attempts >= maxAttempts - 1) {
@@ -334,7 +342,13 @@ class OtlpHttpMetricExporter implements MetricExporter {
           'OtlpHttpMetricExporter: All pending exports completed',
         );
       }
-      return results.every((success) => success);
+      final success = results.every((success) => success);
+      if (!success) {
+        // These pending exports already passed through error handling. A
+        // composite flush must not report their failure a second time.
+        ExportErrorScope.suppress();
+      }
+      return success;
     } else {
       if (OTelLog.isDebug()) {
         OTelLog.debug('OtlpHttpMetricExporter: No pending exports to flush');

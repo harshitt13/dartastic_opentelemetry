@@ -58,4 +58,40 @@ void main() {
     expect(errors, ['original']);
     expect(receivedStack.toString(), stack.toString());
   });
+  test('late nested reports are ignored after the parent scope finishes',
+      () async {
+    final errors = <Object>[];
+    OTel.setErrorHandler((error, _) => errors.add(error));
+    addTearDown(() => OTel.setErrorHandler(null));
+    final release = Completer<void>();
+    late Future<void> pending;
+    await ExportErrorScope.run((outer) async {
+      pending = ExportErrorScope.run((inner) async {
+        await release.future;
+        ExportErrorScope.report('late transport failure');
+        inner.reportIfNeeded('late fallback');
+      });
+      outer.reportIfNeeded('outer timeout');
+    });
+    release.complete();
+    await pending;
+    expect(errors, ['outer timeout']);
+  });
+
+  test('handled siblings do not suppress independent delegate failures',
+      () async {
+    final errors = <Object>[];
+    OTel.setErrorHandler((error, _) => errors.add(error));
+    addTearDown(() => OTel.setErrorHandler(null));
+    await ExportErrorScope.run((outer) async {
+      for (final error in ['first', 'second']) {
+        await ExportErrorScope.run((inner) async {
+          ExportErrorScope.report(error);
+          ExportErrorScope.report('duplicate');
+        });
+      }
+      outer.reportIfNeeded('duplicate fallback');
+    });
+    expect(errors, ['first', 'second']);
+  });
 }

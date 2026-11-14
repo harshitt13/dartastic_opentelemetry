@@ -148,7 +148,10 @@ class SimpleSpanProcessor implements SpanProcessor {
         );
       }
       try {
-        await Future.wait(_pendingExports);
+        // onEnd owns reporting. These waits only drain pending work.
+        await Future.wait(
+          _pendingExports.map((future) => future.catchError((Object _) {})),
+        );
         if (OTelLog.isDebug()) {
           OTelLog.debug('SimpleSpanProcessor: All pending exports completed');
         }
@@ -204,7 +207,10 @@ class SimpleSpanProcessor implements SpanProcessor {
             'SimpleSpanProcessor: Waiting for ${_pendingExports.length} pending exports',
           );
         }
-        await Future.wait(_pendingExports);
+        // onEnd owns reporting. These waits only drain pending work.
+        await Future.wait(
+          _pendingExports.map((future) => future.catchError((Object _) {})),
+        );
         if (OTelLog.isDebug()) {
           OTelLog.debug('SimpleSpanProcessor: All pending exports completed');
         }

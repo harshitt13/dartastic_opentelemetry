@@ -89,7 +89,8 @@ class _SilentMetricExporter implements MetricExporter {
 }
 
 class _TestReader extends PeriodicExportingMetricReader {
-  _TestReader(super.exporter) : super(interval: const Duration(hours: 1));
+  _TestReader(super.exporter, {super.timeout})
+      : super(interval: const Duration(hours: 1));
   @override
   Future<MetricData> collect() async => _metricData();
 }
@@ -517,13 +518,144 @@ void main() {
         await shutdown();
         await operation;
       }, () => MockClient((_) async => http.Response('', 503)));
-      if (signal == 'logs') {
+      expect(errors, hasLength(1));
+      expect(errors.single.toString(), contains('503'));
+      expect(stacks.single, isNotNull);
+    });
+  }
+  for (final shutdown in [false, true]) {
+    test(
+        'span.end followed by ${shutdown ? 'SDK shutdown' : 'flush'} reports once',
+        () async {
+      await OTel.reset();
+      OTel.setErrorHandler((error, stack) {
+        errors.add(error);
+        stacks.add(stack);
+      });
+      final started = Completer<void>();
+      final response = Completer<http.Response>();
+      await http.runWithClient(() async {
+        final processor = SimpleSpanProcessor(OtlpHttpSpanExporter(
+          OtlpHttpExporterConfig(maxRetries: 0),
+        ));
+        await OTel.initialize(
+            detectPlatformResources: false,
+            enableLogs: false,
+            enableMetrics: false,
+            spanProcessor: processor);
+        OTel.tracer().startSpan('end then drain').end();
+        await started.future;
+        final draining = shutdown ? OTel.shutdown() : processor.forceFlush();
+        response.complete(http.Response('', 400));
+        await draining;
         expect(errors, hasLength(1));
-        expect(errors.single.toString(), contains('503'));
+        expect(errors.single.toString(), contains('400'));
         expect(stacks.single, isNotNull);
-      } else {
-        expect(errors, isEmpty);
-      }
+        if (!shutdown) await OTel.shutdown();
+        expect(errors, hasLength(1));
+      },
+          () => MockClient((_) {
+                started.complete();
+                return response.future;
+              }));
+    });
+  }
+
+  test('batch span SDK shutdown reports interrupted retry once', () async {
+    await OTel.reset();
+    OTel.setErrorHandler((error, stack) {
+      errors.add(error);
+      stacks.add(stack);
+    });
+    final retrying = Completer<void>();
+    await http.runWithClient(() async {
+      final exporter = OtlpHttpSpanExporter(OtlpHttpExporterConfig());
+      final processor = BatchSpanProcessor(exporter,
+          const BatchSpanProcessorConfig(scheduleDelay: Duration(hours: 1)));
+      await OTel.initialize(
+          detectPlatformResources: false,
+          enableLogs: false,
+          enableMetrics: false,
+          spanProcessor: processor);
+      OTelLog.currentLevel = LogLevel.debug;
+      OTelLog.logFunction = (message) {
+        if (message.contains('Retrying export after') &&
+            !retrying.isCompleted) {
+          retrying.complete();
+        }
+      };
+      OTel.tracer().startSpan('batch retry shutdown').end();
+      final exporting = processor.forceFlush();
+      await retrying.future;
+      await OTel.shutdown();
+      await exporting;
+      expect(errors, hasLength(1));
+      expect(errors.single.toString(), contains('503'));
+    }, () => MockClient((_) async => http.Response('', 503)));
+  });
+
+  for (final signal in ['logs', 'metrics', 'composite metrics']) {
+    test(
+        '$signal reports outer timeout once after all transport retries finish',
+        () async {
+      var requests = 0;
+      final timedOut = Completer<void>();
+      OTel.setErrorHandler((error, stack) {
+        errors.add(error);
+        stacks.add(stack);
+        if (!timedOut.isCompleted) timedOut.complete();
+      });
+      await http.runWithClient(() async {
+        late Future<void> flushing;
+        late Future<void> Function() cleanup;
+        if (signal == 'logs') {
+          final exporter = OtlpHttpLogRecordExporter(
+              OtlpHttpLogRecordExporterConfig(
+                  timeout: const Duration(milliseconds: 40),
+                  maxRetries: 3,
+                  baseDelay: const Duration(milliseconds: 1),
+                  maxDelay: const Duration(milliseconds: 1)));
+          final processor = BatchLogRecordProcessor(
+              exporter,
+              const BatchLogRecordProcessorConfig(
+                  scheduleDelay: Duration(hours: 1),
+                  exportTimeout: Duration(milliseconds: 20)));
+          await processor.onEmit(record(), null);
+          flushing = processor.forceFlush();
+          cleanup = processor.shutdown;
+        } else {
+          final exporter = OtlpHttpMetricExporter(OtlpHttpMetricExporterConfig(
+              timeout: const Duration(milliseconds: 40),
+              maxRetries: 3,
+              baseDelay: const Duration(milliseconds: 1),
+              maxDelay: const Duration(milliseconds: 1)));
+          final reader = _TestReader(
+              signal == 'metrics'
+                  ? exporter
+                  : CompositeMetricExporter([exporter]),
+              timeout: const Duration(milliseconds: 20));
+          reader.registerMeterProvider(OTel.addMeterProvider('late-timeout'));
+          flushing = reader.forceFlush().then((_) {});
+          cleanup = () async {
+            await reader.shutdown();
+          };
+        }
+        await timedOut.future;
+        expect(errors, [
+          isA<TimeoutException>().having((e) => e.duration, 'outer timeout',
+              const Duration(milliseconds: 20))
+        ]);
+        // forceFlush drains the still-running HTTP export after the outer timeout.
+        await flushing;
+        expect(requests, 4);
+        expect(errors, hasLength(1));
+        OTel.setErrorHandler((_, __) {});
+        await cleanup();
+      },
+          () => MockClient((_) {
+                requests++;
+                return Completer<http.Response>().future;
+              }));
     });
   }
 }

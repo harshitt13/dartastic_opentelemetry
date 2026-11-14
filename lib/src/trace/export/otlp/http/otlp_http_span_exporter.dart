@@ -245,6 +245,8 @@ class OtlpHttpSpanExporter implements SpanExporter {
       );
     }
 
+    Object? lastError;
+    StackTrace? lastStack;
     var attempts = 0;
     final maxAttempts = _config.maxRetries + 1; // Initial attempt + retries
 
@@ -255,6 +257,8 @@ class OtlpHttpSpanExporter implements SpanExporter {
       try {
         // Only check for shutdown on retry attempts to ensure in-progress exports can complete
         if (wasShutdownDuringRetry && attempts > 0) {
+          final error = lastError;
+          if (error != null) Error.throwWithStackTrace(error, lastStack!);
           if (OTelLog.isDebug()) {
             OTelLog.debug(
               'OtlpHttpSpanExporter: Export interrupted by shutdown',
@@ -268,10 +272,12 @@ class OtlpHttpSpanExporter implements SpanExporter {
           OTelLog.debug('OtlpHttpSpanExporter: Successfully exported spans');
         }
         return;
-      } on http.ClientException catch (e) {
+      } on http.ClientException catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         // Check if the exporter was shut down while we were waiting
         if (wasShutdownDuringRetry) {
-          throw StateError('Exporter was shut down during export');
+          rethrow;
         }
 
         // Handle status code-based retries
@@ -294,10 +300,12 @@ class OtlpHttpSpanExporter implements SpanExporter {
         }
         await Future<void>.delayed(delay);
         attempts++;
-      } catch (e) {
+      } catch (e, stackTrace) {
+        lastError = e;
+        lastStack = stackTrace;
         // Check if we should stop retrying due to shutdown
         if (wasShutdownDuringRetry) {
-          throw StateError('Exporter was shut down during export');
+          rethrow;
         }
 
         if (attempts >= maxAttempts - 1) {
